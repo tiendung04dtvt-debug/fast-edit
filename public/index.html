@@ -1268,9 +1268,28 @@ header {
                 </div>
               </div>
 
-              <button type="button" class="btn primary" id="btnRunSmartCut" onclick="runSmartCut()" style="width:100%;background:#2563eb;box-shadow:0 3px 12px rgba(37,99,235,0.25);padding:10px;font-size:13px;font-weight:800">
-                🚀 Cắt phân đoạn ngay
-              </button>
+              <!-- TÙY CHỌN LỌC SẠCH TẠP ÂM / TIẾNG QUẠT / TIẾNG GIÓ -->
+              <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:6px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin:0">
+                  <input type="checkbox" id="chkDenoiseAudio" style="width:16px;height:16px;accent-color:#0d9488;cursor:pointer">
+                  <div>
+                    <div style="font-size:12px;font-weight:800;color:#0f766e;display:flex;align-items:center;gap:5px">
+                      <span>🎙️ Lọc sạch tạp âm & Tiếng quạt, gió</span>
+                      <span class="badge" style="font-size:9.5px;padding:1px 6px;background:#ccfbf1;color:#0f766e;border-color:#5eead4">Khử ồn thông minh</span>
+                    </div>
+                    <div style="font-size:10.5px;color:#115e59">Tự động loại bỏ tiếng ù quạt trần, gió rít, tiếng rè rè micro · Giọng nói trong vắt và ấm</div>
+                  </div>
+                </label>
+              </div>
+
+              <div style="display:flex;gap:8px">
+                <button type="button" class="btn primary" id="btnRunSmartCut" onclick="runSmartCut()" style="flex:1.4;background:#2563eb;box-shadow:0 3px 12px rgba(37,99,235,0.25);padding:10px;font-size:13px;font-weight:800">
+                  🚀 Cắt phân đoạn ngay
+                </button>
+                <button type="button" class="btn outline" id="btnQuickDenoise" onclick="runQuickDenoise()" style="flex:1;background:#fff;border-color:#0d9488;color:#0f766e;font-size:11.5px;font-weight:800;padding:10px 8px;display:flex;align-items:center;justify-content:center;gap:4px" title="Lọc sạch tiếng quạt và tạp âm cho toàn bộ video này mà không cần cắt">
+                  <span>🎙️ Lọc ồn cả video (1s)</span>
+                </button>
+              </div>
 
               <!-- HỘP TIẾN TRÌNH % REAL-TIME -->
               <div id="smartCutProgressBox" class="task-progress-box" style="display:none">
@@ -1365,8 +1384,8 @@ header {
               </div>
             </div>
           </div>
-
-          <!-- KHUNG HIỂN THỊ KẾT QUẢ XỬ LÝ (TỶ LỆ 16:9 CHUẨN, KHÔNG BẸP/MÉO) -->
+<!-- KHUNG HIỂN THỊ KẾT QUẢ XỬ LÝ
+<!-- KHUNG HIỂN THỊ KẾT QUẢ XỬ LÝ (TỶ LỆ 16:9 CHUẨN, KHÔNG BẸP/MÉO) -->
           <div id="editorResultBox" class="editor-studio-card" style="display:none;background:#f0fdf4;border:1.5px solid #86efac;padding:14px;margin-top:6px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
               <div style="display:flex;align-items:center;gap:8px">
@@ -6189,7 +6208,7 @@ async function checkAppUpdate(isManual = false) {
     const res = await fetch('/api/update/check');
     const data = await res.json();
     if (!data.ok) {
-      if (isManual) alert(data.error || 'Không thể kiểm tra cập nhật lúc này');
+      if (isManual) toast(data.error || 'Chưa có bản cập nhật mới.');
       if (label) label.textContent = 'Bản v' + (data.localVersion || '1.0.0');
       if (icon) icon.textContent = '🔄';
       return;
@@ -6208,16 +6227,14 @@ async function checkAppUpdate(isManual = false) {
       if (icon) icon.textContent = '🚀';
       if (label) label.textContent = 'Có bản mới v' + data.remoteVersion + '!';
 
-      if (!isManual) {
-        toast('🚀 Đã có bản cập nhật mới v' + data.remoteVersion + '! Bấm nút [Có bản mới] ở góc trên để nâng cấp trong 2 giây.', 9000);
-      }
+      toast('🚀 Đã có bản cập nhật mới v' + data.remoteVersion + '! Bấm nút [Có bản mới] ở góc trên để nâng cấp trong 2 giây.', 9000);
     } else {
       if (isManual) {
-        alert('Bạn đang dùng phiên bản mới nhất (v' + data.localVersion + ')!');
+        toast('✨ Bạn đang dùng phiên bản mới nhất (v' + data.localVersion + ')!');
       }
     }
   } catch (err) {
-    if (isManual) alert('Lỗi kết nối kiểm tra cập nhật: ' + err.message);
+    if (isManual) toast('Chưa có bản cập nhật mới hoặc đang chạy offline.');
     if (label) label.textContent = 'Bản v1.0.0';
     if (icon) icon.textContent = '🔄';
   }
@@ -6263,6 +6280,59 @@ async function handleUpdateClick() {
 setTimeout(() => {
   checkAppUpdate(false);
 }, 3000);
+
+
+
+
+
+
+
+// --- TÍNH NĂNG 1-CLICK LỌC SẠCH TẠP ÂM & TIẾNG QUẠT, GIÓ ---
+async function runQuickDenoise() {
+  if (!project || !currentEditorVideo) {
+    toast('Vui lòng chọn hoặc tải một video trước khi lọc tạp âm.');
+    return;
+  }
+  const btn = $('#btnQuickDenoise');
+  if (btn) btn.disabled = true;
+  pauseAllEditorPlayers();
+
+  const task = startEditorTask('Lọc sạch tạp âm & Tiếng quạt', () => {
+    if (btn) btn.disabled = false;
+  }, {
+    boxId: 'smartCutProgressBox',
+    steps: [
+      '🎙️ Đang phân tích âm thanh & phát hiện tiếng quạt...',
+      '⚡ Đang khử ồn đa luồng & giữ 100% video gốc...',
+      '✓ Xuất video hoàn chỉnh...'
+    ],
+    estSeconds: 1.5
+  });
+
+  try {
+    const res = await api('/api/video/denoise', {
+      projectId: project.id,
+      videoName: currentEditorVideo.name
+    }, { signal: task.signal });
+
+    displayEditorResult(
+      '🎙️ Lọc sạch tạp âm & Tiếng quạt thành công!',
+      `Tập tin: ${res.fileName} · Video gốc giữ nguyên 100% · Giọng nói trong vắt · Xử lý xong trong ${(res.processTimeMs/1000).toFixed(1)}s!`,
+      `media/${res.fileName}`,
+      res.fileName,
+      res.duration
+    );
+    toast(`🎉 Đã lọc sạch tiếng ồn chỉ trong ${(res.processTimeMs/1000).toFixed(1)}s!`, 5000);
+    refreshVideoLibrarySilently();
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      alert('Lỗi lọc tạp âm: ' + err.message);
+    }
+  } finally {
+    task.done();
+    if (btn) btn.disabled = false;
+  }
+}
 
 </script>
 </body>

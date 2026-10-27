@@ -23,7 +23,7 @@ async function getCachedDuration(fullP, mtimeMs) {
   mediaDurationCache.set(key, dur);
   return dur;
 }
-const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css', '.js':'text/javascript', '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.wav':'audio/wav', '.mp3':'audio/mpeg', '.mp4':'video/mp4', '.json':'application/json' };
+const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css', '.js':'text/javascript', '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.wav':'audio/wav', '.mp3':'audio/mpeg', '.mp4':'video/mp4', '.json':'application/json', '.wasm':'application/wasm', '.tflite':'application/octet-stream', '.data':'application/octet-stream' };
 const WINGET_FFMPEG = 'C:\\Users\\OS\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffmpeg.exe';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || (fsSync.existsSync(path.join(ROOT, 'runtime', 'ffmpeg.exe')) ? path.join(ROOT, 'runtime', 'ffmpeg.exe') : (fsSync.existsSync(WINGET_FFMPEG) ? WINGET_FFMPEG : 'ffmpeg'));
 
@@ -760,6 +760,16 @@ const server=http.createServer(async (req,res)=>{
         const remoteUrl = 'https://raw.githubusercontent.com/tiendung04dtvt-debug/fast-edit/main/version.json?_t=' + Date.now();
         const r = await fetch(remoteUrl, { signal: AbortSignal.timeout(6000) });
         if (!r.ok) {
+          if (r.status === 404) {
+            return send(res, 200, {
+              ok: true,
+              hasUpdate: false,
+              localVersion: localVersion.version,
+              remoteVersion: localVersion.version,
+              notes: 'Bạn đang dùng phiên bản mới nhất.',
+              files: []
+            });
+          }
           return send(res, 200, { ok: false, error: 'Không thể lấy thông tin cập nhật từ GitHub (HTTP ' + r.status + ')' });
         }
         const remoteVersion = await r.json();
@@ -1401,16 +1411,34 @@ const server=http.createServer(async (req,res)=>{
       try {
         console.log(`[Video Cut] Cắt ${videoFile.fileName} (${startSec.toFixed(1)}s -> ${targetEnd.toFixed(1)}s, Lossless=${isLossless}, TargetRes=${targetRes}, Sharpen=${enableSharpen})...`);
         const t0 = Date.now();
+        const enableDenoise = Boolean(body.denoise);
         let modeLabel = 'Lossless Stream Copy (100% Giữ nguyên gốc)';
 
         if (isLossless) {
           // 1. CẮT NGUYÊN GỐC KHÔNG NÉN LẠI (LOSSLESS) - 100% KHÔNG GIẢM CHẤT LƯỢNG
+          if (enableDenoise) modeLabel = 'Cắt siêu tốc + Lọc sạch tạp âm & Khử tiếng bụp';
+          const cutFadeOut = Math.max(0, cutDuration - 0.01).toFixed(3);
+          const cutDenoiseFilter = [
+            'aresample=async=1:first_pts=0',
+            'highpass=f=80:poles=2',
+            'afftdn=nr=10:nf=-45:tn=1:gs=5',
+            'equalizer=f=3200:t=q:w=1.2:g=2.5',
+            'afade=t=in:d=0.01',
+            `afade=t=out:st=${cutFadeOut}:d=0.01`,
+            'alimiter=limit=0.84:attack=5:release=150:level=0'
+          ].join(',');
+
           const copyArgs = [
             '-y', '-hide_banner',
             '-ss', startSec.toString(),
-            '-to', targetEnd.toString(),
+            '-t', cutDuration.toString(),
             '-i', inputPath,
-            '-c', 'copy',
+            '-map', '0:v:0',
+            '-map', '0:a:0?',
+            '-c:v', 'copy',
+            ...(enableDenoise
+              ? ['-af', cutDenoiseFilter, '-c:a', 'aac', '-b:a', '192k']
+              : ['-c:a', 'copy']),
             '-avoid_negative_ts', 'make_zero',
             '-movflags', '+faststart',
             outputPath
@@ -1442,6 +1470,10 @@ const server=http.createServer(async (req,res)=>{
           }
           vFilters.push('setsar=1', 'fps=30', 'format=yuv420p');
 
+          const aArgs = enableDenoise
+            ? ['-af', 'highpass=f=80,afftdn=nr=14:nf=-25:tn=1', '-c:a', 'aac', '-b:a', '192k']
+            : ['-c:a', 'aac', '-b:a', '192k'];
+
           const args = [
             '-y', '-hide_banner',
             '-ss', startSec.toString(),
@@ -1449,7 +1481,7 @@ const server=http.createServer(async (req,res)=>{
             '-i', inputPath,
             '-vf', vFilters.join(','),
             ...vEncArgs,
-            '-c:a', 'aac', '-b:a', '192k',
+            ...aArgs,
             '-movflags', '+faststart',
             outputPath
           ];
@@ -1481,6 +1513,87 @@ const server=http.createServer(async (req,res)=>{
         }
         console.error('[Video Cut Error]', err);
         return send(res, 500, { error: `Lỗi cắt video: ${err.message}` });
+      }
+    }
+
+    if(req.method==='POST' && url.pathname==='/api/video/denoise') {
+      const clientAbort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) clientAbort.abort(); });
+      let outputPath = null;
+
+      try {
+        const body = await readJson(req);
+        const projectId = safeId(body.projectId || body.project_id);
+        if (!projectId) return send(res, 400, { error: 'Mã dự án không hợp lệ.' });
+        const videoName = String(body.videoName || body.video_name || '').trim();
+        if (!videoName) return send(res, 400, { error: 'Tên tệp video không hợp lệ.' });
+
+        const videoFile = await resolveVideoFile(projectId, videoName);
+        if (!videoFile) return send(res, 404, { error: 'Không tìm thấy tệp video nguồn.' });
+        const inputPath = videoFile.fullPath;
+
+        const outDir = path.join(DATA, projectId, 'media');
+        await fs.mkdir(outDir, { recursive: true });
+        const ts = Date.now();
+        const baseName = path.parse(videoFile.fileName).name;
+        const outFileName = `denoised_${ts}_${baseName}.mp4`;
+        outputPath = path.join(outDir, outFileName);
+
+        const totalDur = (await getMediaDuration(inputPath)) || 10;
+        const fadeOutStart = Math.max(0, totalDur - 0.01).toFixed(3);
+        const audioFilters = [
+          'aresample=async=1:first_pts=0',
+          'highpass=f=80:poles=2',
+          'afftdn=nr=10:nf=-45:tn=1:gs=5',
+          'equalizer=f=3200:t=q:w=1.2:g=2.5',
+          'afade=t=in:d=0.01',
+          `afade=t=out:st=${fadeOutStart}:d=0.01`,
+          'alimiter=limit=0.84:attack=5:release=150:level=0'
+        ].join(',');
+
+        // Giữ nguyên 100% video gốc (-c:v copy), lọc sạch tiếng quạt, gió, triệt tiêu tiếng bụp và chống trùng đè âm thanh
+        const ffmpegArgs = [
+          '-y', '-hide_banner',
+          '-i', inputPath,
+          '-map', '0:v:0',
+          '-map', '0:a:0?',
+          '-c:v', 'copy',
+          '-af', audioFilters,
+          '-c:a', 'aac',
+          '-b:a', '192k',
+          '-avoid_negative_ts', 'make_zero',
+          '-movflags', '+faststart',
+          outputPath
+        ];
+
+        const tStart = Date.now();
+        await new Promise((resolve, reject) => {
+          const ff = spawn(FFMPEG_BIN, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          let stderr = '';
+          ff.stderr.on('data', d => stderr += d.toString());
+          ff.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(stderr || `FFmpeg thoát với mã lỗi ${code}`));
+          });
+          ff.on('error', reject);
+          clientAbort.signal.addEventListener('abort', () => {
+            try { ff.kill('SIGKILL'); } catch {}
+          });
+        });
+
+        const procTime = Date.now() - tStart;
+        const newDur = await getMediaDuration(outputPath).catch(() => 0);
+        return send(res, 200, {
+          ok: true,
+          outputFile: outFileName,
+          fileName: outFileName,
+          downloadUrl: `/api/media/${projectId}/${outFileName}`,
+          duration: newDur,
+          processTimeMs: procTime
+        });
+      } catch (err) {
+        if (outputPath) await fs.unlink(outputPath).catch(() => {});
+        return send(res, 500, { error: 'Lỗi lọc tạp âm: ' + err.message });
       }
     }
 
@@ -3074,14 +3187,28 @@ const server=http.createServer(async (req,res)=>{
       });
       return;
     }
-    if(req.method==='GET') {
-      const file=url.pathname==='/'?path.join(ROOT,'public','index.html'):path.join(ROOT,'public',path.basename(url.pathname));
-      try {
-        const data=await fs.readFile(file);
-        return send(res,200,data.toString(),MIME[path.extname(file)]||'application/octet-stream');
-      } catch {
-        return send(res,404,'Not found','text/plain');
+    if(req.method==='GET' || req.method==='HEAD') {
+      const relPath = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
+      const cleanRel = path.normalize(relPath).replace(/^(\.\.[\/\\])+/, '');
+      const file = path.join(ROOT, 'public', cleanRel);
+      if (file.startsWith(path.join(ROOT, 'public'))) {
+        try {
+          const stat = await fs.stat(file);
+          if (stat.isFile()) {
+            const ext = path.extname(file).toLowerCase();
+            const mimeType = MIME[ext] || 'application/octet-stream';
+            res.writeHead(200, {
+              'Content-Type': mimeType,
+              'Content-Length': stat.size,
+              'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400'
+            });
+            const stream = fsSync.createReadStream(file);
+            stream.on('error', () => { try { if (!res.writableEnded) res.end(); } catch {} });
+            return stream.pipe(res);
+          }
+        } catch {}
       }
+      return send(res, 404, 'Not found', 'text/plain');
     }
     send(res,404,{error:'Không tìm thấy.'});
   } catch(e) {
