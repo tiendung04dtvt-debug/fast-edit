@@ -1,0 +1,16 @@
+{
+  "name": "Fast Edit",
+  "short_name": "Fast Edit",
+  "description": "Biên tập, cắt ghép video siêu tốc không mất chất lượng",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/fastedit_icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

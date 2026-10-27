@@ -1,0 +1,28 @@
+{
+  "results": {
+    "6.e_stream_diff": "PASS",
+    "6.g_no_voice_scene": "PASS",
+    "6.e_master_duration": "PASS",
+    "6.a_cache_hit_all": "PASS",
+    "6.b_change_image_tts_saved": "PASS",
+    "6.c_change_text_single_scene": "PASS",
+    "6.d_audio_version_isolated": "PASS",
+    "server_script_approved_reset": "PASS",
+    "server_script_approve_endpoint": "PASS",
+    "single_scene_render_api": "PASS",
+    "cache_clean_api": "PASS"
+  },
+  "timings": {
+    "coldDurationMs": 1232,
+    "cacheHitTimeMs": 278,
+    "concatMs": 129,
+    "singleMs": 281
+  },
+  "masterStreams": {
+    "videoDur": 12,
+    "audioDur": 12.02322,
+    "audioCodec": "aac",
+    "sampleRate": "44100",
+    "channels": 2
+  }
+}

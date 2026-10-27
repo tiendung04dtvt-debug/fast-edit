@@ -1,0 +1,13 @@
+{
+  "status": "completed",
+  "file_index": 2,
+  "total_files": 2,
+  "current_file": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+  "overall_downloaded_bytes": 11498078188,
+  "overall_total_bytes": 11498078188,
+  "overall_percent": 100.0,
+  "speed_mbps": 0.0,
+  "eta_seconds": 0,
+  "updated_at": 1792325441.6414518,
+  "message": "Tải thành công toàn bộ model LTX-Video 2.5! Đã sẵn sàng sinh video 15s."
+}

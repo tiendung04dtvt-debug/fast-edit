@@ -1,0 +1,26 @@
+# Binaries & Large Runtimes (không đưa lên GitHub vì nặng và không cần update)
+runtime/
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+FastEdit.exe
+
+# Dữ liệu dự án cá nhân & video tải lên
+projects/*
+!projects/.gitkeep
+
+# Legacy backend không dùng cho FastEdit
+ai_backend/
+tts_backend/
+__pycache__/
+*.pyc
+
+# File tạm & logs
+*.log
+.tmp*
+temp/
+node_modules/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-10-27T11:45:00.000Z",
+  "notes": "Bản khởi tạo - Tích hợp hệ thống Tự động cập nhật 1-Click qua GitHub",
+  "files": [
+    "server.mjs",
+    "video_concat_planner.mjs",
+    "package.json",
+    "version.json",
+    "public/index.html"
+  ]
+}

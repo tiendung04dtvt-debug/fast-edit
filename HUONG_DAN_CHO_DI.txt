@@ -1,0 +1,15 @@
+=== HƯỚNG DẪN SỬ DỤNG FAST EDIT DÀNH CHO DÌ ===
+
+1. CÁCH MỞ PHẦN MỀM:
+   - Dì mở thư mục giải nén và nhấp đúp vào tệp: FastEdit.exe (hình tia chớp sấm sét).
+   - Ngay khi nhấp mở, phần mềm sẽ TỰ ĐỘNG TẠO BIỂU TƯỢNG "Fast Edit" NGAY NGOÀI MÀN HÌNH DESKTOP của Dì.
+   - Từ các lần sau, Dì chỉ cần nhấp thẳng vào biểu tượng Fast Edit ngoài Desktop để mở, KHÔNG CẦN phải vào thư mục tìm nữa!
+
+2. CÁC TÍNH NĂNG CHÍNH:
+   - Cắt video siêu tốc (0.5s - 1s): Kéo 2 đầu thanh trắng trên làn sóng âm hoặc bấm [In] / [Out] để chọn đoạn cần giữ lại, rồi bấm "Cắt phân đoạn ngay".
+   - Ghép nhiều video: Bấm "Ghép nhiều video ngay" -> Chọn các video cần nối -> Bấm "GHÉP SIÊU TỐC TẤT CẢ CLIP".
+   - Tự chọn nơi lưu: Khi xuất video, dì bấm "Lưu vào máy (Tự chọn nơi lưu...)" để chọn Desktop, USB hay ổ đĩa tùy ý.
+   - Kéo dãn khung nhìn: Ở giữa video và bảng công cụ có thanh màu xanh tím [◀▶], Dì có thể nhấp giữ chuột kéo qua lại để phóng to màn hình video.
+
+3. HOÀN TOÀN OFFLINE:
+   - Phần mềm chạy trực tiếp trên máy của Dì, không cần mạng Internet hay Wi-Fi.
