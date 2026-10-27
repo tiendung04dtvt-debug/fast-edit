@@ -51,6 +51,7 @@ copyFileSafe(path.join(srcDir, 'start.bat'), path.join(destDir, 'start.bat'));
 copyFileSafe(path.join(srcDir, 'server.mjs'), path.join(destDir, 'server.mjs'));
 copyFileSafe(path.join(srcDir, 'video_concat_planner.mjs'), path.join(destDir, 'video_concat_planner.mjs'));
 copyFileSafe(path.join(srcDir, 'package.json'), path.join(destDir, 'package.json'));
+copyFileSafe(path.join(srcDir, 'version.json'), path.join(destDir, 'version.json'));
 
 // 2. Copy runtime (node.exe, ffmpeg.exe)
 console.log('Đang sao chép runtime (Node.js & FFmpeg)...');
