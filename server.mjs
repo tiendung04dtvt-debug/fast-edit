@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn, exec } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -106,9 +107,19 @@ function killProcessTree(child) {
   } catch {}
 }
 
+const RECOMMENDED_THREADS = Math.min(4, Math.max(1, Math.floor((os.cpus() || []).length / 2)));
+
 const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
   const { signal, timeout = 600000, inactivityTimeout = 0, onProgress, totalDuration, ...spawnOpts } = opts;
-  const child = spawn(cmd, args, { windowsHide:true, ...spawnOpts });
+  const isFFmpeg = path.basename(cmd).toLowerCase().includes('ffmpeg');
+  const finalArgs = [...args];
+  if (isFFmpeg && !finalArgs.includes('-threads')) {
+    finalArgs.unshift('-threads', String(RECOMMENDED_THREADS));
+  }
+  const child = spawn(cmd, finalArgs, { windowsHide:true, ...spawnOpts });
+  if (child.pid && os.constants.priority?.PRIORITY_BELOW_NORMAL) {
+    try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+  }
   let out='', err='';
   let aborted = false;
   let watchdogTimer = null;

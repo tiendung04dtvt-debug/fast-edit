@@ -1,7 +1,7 @@
 {
-  "version": "1.1.0",
-  "updatedAt": "2026-10-27T16:30:00.000Z",
-  "notes": "v1.1.0: Lọc sạch tạp âm & tiếng gió quạt (DSP 80Hz + afftdn), triệt tiêu tiếng bụp micro-fade, tối ưu đồng bộ hình-tiếng.",
+  "version": "1.2.0",
+  "updatedAt": "2026-10-27T16:50:00.000Z",
+  "notes": "v1.2.0: Siêu tối ưu cho Laptop văn phòng (giảm 50% dung lượng đĩa, chống đơ chuột, tự dọn cache LRU, ghi file an toàn).",
   "files": [
     "server.mjs",
     "video_concat_planner.mjs",
