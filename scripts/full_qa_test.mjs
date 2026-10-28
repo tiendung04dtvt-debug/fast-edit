@@ -197,6 +197,8 @@ try {
     await check('Cắt nhanh lossless', async () => {
       data = await postVideo('/api/video/smart-cut', { projectId, videoName: 'qa_source.mp4', start: 1, end: 3, lossless: true });
       assert.ok(data.newDuration >= 1.5 && data.newDuration <= 2.5, `duration=${data.newDuration}`);
+      assert.equal(data.lightingLevel, 'none');
+      assert.match(data.mode, /Lossless Stream Copy/);
       const list = await api(`/api/video/list?id=${projectId}`);
       assert.equal(list.videoListCache, 'miss', 'tác vụ tạo media phải vô hiệu hóa cache thư viện');
       assert.ok(list.data.videos.some(video => video.name === data.fileName), 'video vừa cắt phải xuất hiện trong thư viện');
@@ -222,6 +224,22 @@ try {
     });
     assert.ok(data.newDuration >= 1.5 && data.newDuration <= 2.5, `duration=${data.newDuration}`);
     return `${data.newDuration.toFixed(3)}s; ${data.processTimeMs}ms; ${data.mode}`;
+  });
+
+  await check('Làm sáng video hai mức tự nhiên/sáng rõ', async () => {
+    const outputs = [];
+    for (const lightingLevel of ['natural', 'bright']) {
+      const data = await postVideo('/api/video/smart-cut', {
+        projectId, videoName: 'qa_source.mp4', start: 1, end: 3,
+        lossless: true, targetRes: 'original', lightingLevel
+      });
+      assert.equal(data.lightingLevel, lightingLevel);
+      assert.match(data.mode, new RegExp(lightingLevel));
+      assert.ok(data.newDuration >= 1.5 && data.newDuration <= 2.5, `duration=${data.newDuration}`);
+      await fs.access(path.join(projectDir, 'media', data.fileName));
+      outputs.push(`${lightingLevel}=${data.processTimeMs}ms`);
+    }
+    return outputs.join('; ');
   });
 
   await check('Lọc tạp âm (denoise)', async () => {

@@ -1282,6 +1282,24 @@ header {
                 </label>
               </div>
 
+              <!-- TÙY CHỌN LÀM SÁNG & CÂN MÀU: MẶC ĐỊNH TẮT ĐỂ GIỮ CẮT LOSSLESS -->
+              <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:7px">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;user-select:none;margin:0">
+                  <input type="checkbox" id="chkVideoLighting" onchange="updateLightingOptionUI()" style="width:16px;height:16px;margin-top:2px;accent-color:#ea580c;cursor:pointer">
+                  <div>
+                    <div style="font-size:12px;font-weight:800;color:#9a3412">🌸 Làm sáng & tươi màu da <span style="font-weight:600;color:#7c2d12">(điều chỉnh toàn khung hình)</span></div>
+                    <div style="font-size:10.5px;color:#9a3412">Mặc định tắt. Khi bật, video sẽ được mã hóa lại nên thời gian xuất lâu hơn cắt siêu tốc.</div>
+                  </div>
+                </label>
+                <div id="videoLightingControls" style="display:none;padding-left:24px">
+                  <label for="videoLightingLevel" style="font-size:11px;font-weight:700;color:#7c2d12;margin-right:6px">Mức độ:</label>
+                  <select id="videoLightingLevel" style="padding:5px 8px;border:1px solid #fdba74;border-radius:6px;background:#fff;color:#7c2d12;font-size:11px;font-weight:700">
+                    <option value="natural" selected>🌤️ Tự nhiên (khuyên dùng)</option>
+                    <option value="bright">☀️ Sáng rõ (phòng tối)</option>
+                  </select>
+                </div>
+              </div>
+
               <div style="display:flex;gap:8px">
                 <button type="button" class="btn primary" id="btnRunSmartCut" onclick="runSmartCut()" style="flex:1.4;background:#2563eb;box-shadow:0 3px 12px rgba(37,99,235,0.25);padding:10px;font-size:13px;font-weight:800">
                   🚀 Cắt phân đoạn ngay
@@ -3793,16 +3811,17 @@ async function runSmartCut() {
   pauseAllEditorPlayers();
   const btn = $('#btnRunSmartCut');
   btn.disabled = true;
+  const lightingEnabled = $('#chkVideoLighting')?.checked === true;
+  const lightingLevel = lightingEnabled ? ($('#videoLightingLevel')?.value || 'natural') : 'none';
 
-    const task = startEditorTask('Cắt siêu tốc giữ nguyên 100% gốc', () => {
+    const task = startEditorTask(lightingEnabled ? 'Cắt và làm sáng video (đang mã hóa lại)' : 'Cắt siêu tốc giữ nguyên 100% gốc', () => {
     btn.disabled = false;
   }, {
     boxId: 'smartCutProgressBox',
-    steps: [
-      '⚡ Đang thực hiện Lossless Stream Copy (0.5s)...',
-      '✓ Xuất video hoàn chỉnh...'
-    ],
-    estSeconds: 1.0
+    steps: lightingEnabled
+      ? ['🌸 Đang cân sáng và màu video...', '🎞️ Đang mã hóa lại đoạn đã chọn...', '✓ Xuất video hoàn chỉnh...']
+      : ['⚡ Đang thực hiện Lossless Stream Copy (0.5s)...', '✓ Xuất video hoàn chỉnh...'],
+    estSeconds: lightingEnabled ? 4.0 : 1.0
   });
 
   try {
@@ -3811,7 +3830,9 @@ async function runSmartCut() {
       videoName: currentEditorVideo.name,
       start: inVal,
       end: outVal,
-      lossless: true
+      lossless: !lightingEnabled,
+      denoise: $('#chkDenoiseAudio')?.checked === true,
+      lightingLevel
     }, { signal: task.signal });
 
     displayEditorResult(
@@ -3832,6 +3853,14 @@ async function runSmartCut() {
     await finishEditorTask();
     btn.disabled = false;
   }
+}
+
+function updateLightingOptionUI() {
+  const enabled = $('#chkVideoLighting')?.checked === true;
+  const controls = $('#videoLightingControls');
+  if (controls) controls.style.display = enabled ? 'block' : 'none';
+  const button = $('#btnRunSmartCut');
+  if (button) button.innerHTML = enabled ? '🌸 Cắt & làm sáng video' : '🚀 Cắt phân đoạn ngay';
 }
 
 async function runMultiCut() {

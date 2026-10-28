@@ -1,7 +1,7 @@
 {
-  "version": "1.4.0",
-  "updatedAt": "2026-10-28T09:35:00.000Z",
-  "notes": "v1.4.0: Hỗ trợ tên file Unicode tiếng Việt phức tạp (NFC/NFD/apostrophe), đo lường Peak RAM 4K an toàn, hủy render dọn .part trong 159ms.",
+  "version": "1.5.0",
+  "updatedAt": "2026-10-28T10:30:00.000Z",
+  "notes": "v1.5.0: Tính năng Làm sáng & Tươi màu da 1-Click (2 mức: Tự nhiên / Sáng rõ, chống cháy sáng highlights).",
   "files": [
     "server.mjs",
     "video_concat_planner.mjs",

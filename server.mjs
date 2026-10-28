@@ -320,7 +320,7 @@ async function getQualityEncoderArgs(targetRes = '1080p', isHighQuality = true) 
     return ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', cq, '-qp_p', cq, '-pix_fmt', 'yuv420p'];
   }
   // Siêu tối ưu cho Laptop văn phòng không GPU: đa luồng cực nhanh, máy mát êm ru
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', crf, '-threads', '0', '-pix_fmt', 'yuv420p'];
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', crf, '-threads', String(RECOMMENDED_THREADS), '-pix_fmt', 'yuv420p'];
 }
 
 async function getFastEncoderArgs() {
@@ -1535,8 +1535,12 @@ const server=http.createServer(async (req,res)=>{
       const targetEnd = (endSec > 0 && endSec <= totalDur) ? endSec : totalDur;
       const cutDuration = Math.max(0.1, targetEnd - startSec);
 
-      const isLossless = body.lossless === true || (body.lossless !== false && body.enhance !== true && (!body.targetRes || body.targetRes === 'original'));
       const targetRes = String(body.targetRes || 'original').toLowerCase();
+      const lightingLevel = ['natural', 'bright'].includes(String(body.lightingLevel || '').toLowerCase())
+        ? String(body.lightingLevel).toLowerCase()
+        : 'none';
+      const hasLighting = lightingLevel !== 'none';
+      const isLossless = !hasLighting && (body.lossless === true || (body.lossless !== false && body.enhance !== true && (!body.targetRes || body.targetRes === 'original')));
       const enableSharpen = body.sharpen === true || body.sharpen === 'true';
       const enableColorBoost = body.colorBoost === true || body.colorBoost === 'true';
 
@@ -1545,10 +1549,10 @@ const server=http.createServer(async (req,res)=>{
       outputPath = path.join(dir, 'media', outName);
 
       try {
-        console.log(`[Video Cut] Cắt ${videoFile.fileName} (${startSec.toFixed(1)}s -> ${targetEnd.toFixed(1)}s, Lossless=${isLossless}, TargetRes=${targetRes}, Sharpen=${enableSharpen})...`);
+        console.log(`[Video Cut] Cắt ${videoFile.fileName} (${startSec.toFixed(1)}s -> ${targetEnd.toFixed(1)}s, Lossless=${isLossless}, TargetRes=${targetRes}, Sharpen=${enableSharpen}, Lighting=${lightingLevel})...`);
         const t0 = Date.now();
         const enableDenoise = Boolean(body.denoise);
-        let modeLabel = 'Lossless Stream Copy (100% Giữ nguyên gốc)';
+        let modeLabel = hasLighting ? `Làm sáng & tươi màu (${lightingLevel})` : 'Lossless Stream Copy (100% Giữ nguyên gốc)';
 
         if (isLossless) {
           // 1. CẮT NGUYÊN GỐC KHÔNG NÉN LẠI (LOSSLESS) - 100% KHÔNG GIẢM CHẤT LƯỢNG
@@ -1583,7 +1587,9 @@ const server=http.createServer(async (req,res)=>{
           await run(FFMPEG_BIN, copyArgs, { cwd: dir, windowsHide: true, signal: clientAbort.signal, timeout: copyTimeout });
         } else {
           // 2. CẮT & TĂNG CHẤT LƯỢNG (NÂNG NÉT AMD CAS / NÂNG ĐỘ PHÂN GIẢI / LÀM TƯƠI MÀU)
-          modeLabel = `Tăng chất lượng Studio (${targetRes.toUpperCase()})`;
+          modeLabel = hasLighting
+            ? `Làm sáng & tươi màu (${lightingLevel})`
+            : `Tăng chất lượng Studio (${targetRes.toUpperCase()})`;
           const vEncArgs = await getQualityEncoderArgs(targetRes, true);
           const meta = await getVideoStreamInfo(inputPath);
 
@@ -1600,6 +1606,13 @@ const server=http.createServer(async (req,res)=>{
           }
           if (enableColorBoost) {
             vFilters.push('eq=contrast=1.06:brightness=0.01:saturation=1.12');
+          }
+          if (lightingLevel === 'natural') {
+            vFilters.push("curves=master='0/0 0.35/0.38 0.7/0.72 1/1'");
+            vFilters.push('eq=contrast=1.03:saturation=1.04');
+          } else if (lightingLevel === 'bright') {
+            vFilters.push("curves=master='0/0 0.30/0.38 0.7/0.74 1/1'");
+            vFilters.push('eq=contrast=1.06:saturation=1.08:gamma=1.06');
           }
           if (enableSharpen) {
             vFilters.push('cas=strength=0.5:planes=1');
@@ -1639,6 +1652,7 @@ const server=http.createServer(async (req,res)=>{
           start: startSec,
           end: targetEnd,
           mode: modeLabel,
+          lightingLevel,
           processTimeMs: processMs
         });
       } catch (err) {
