@@ -147,16 +147,20 @@ export function clearSignatureCache() { signatureCache.clear(); }
 
 /** Probe nhiều clip với số luồng song song giới hạn. */
 export async function getSignaturesBatch(filePaths, ffprobeBin, runCommand, fsStatSync, concurrency = 4) {
-  const results = new Array(filePaths.length);
+  const uniquePaths = [...new Set(filePaths)];
+  if (!uniquePaths.length) return [];
+  const uniqueResults = new Array(uniquePaths.length);
+  const indexByPath = new Map(uniquePaths.map((filePath, index) => [filePath, index]));
   let next = 0;
   const worker = async () => {
-    while (next < filePaths.length) {
+    while (next < uniquePaths.length) {
       const i = next++;
-      results[i] = await getVideoSignature(filePaths[i], ffprobeBin, runCommand, fsStatSync);
+      uniqueResults[i] = await getVideoSignature(uniquePaths[i], ffprobeBin, runCommand, fsStatSync);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(concurrency, filePaths.length) }, worker));
-  return results;
+  const workerCount = Math.min(uniquePaths.length, Math.max(1, Math.floor(concurrency) || 1));
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return filePaths.map(filePath => uniqueResults[indexByPath.get(filePath)]);
 }
 
 /** KHÓA CỨNG: khác nhau thì không thể copy chung -> phải re-encode clip lệch. */

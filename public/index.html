@@ -3388,6 +3388,14 @@ function selectExistingVideo(v) {
       player.load();
     } catch {}
   }
+  const resultPlayer = $('#editorResultPlayer');
+  if (resultPlayer && resultPlayer.src) {
+    try {
+      resultPlayer.pause();
+      resultPlayer.removeAttribute('src');
+      resultPlayer.load();
+    } catch {}
+  }
   player.src = v.url;
   player.onloadedmetadata = () => {
     const dur = player.duration || v.duration || 0;
@@ -4067,6 +4075,10 @@ function switchEditorTool(tool) {
 
 // --- THANH SÓNG ÂM MINI (MINI-WAVEFORM & SCRUBBER VỚI BỘ NHỚ ĐỆM .PEAKS) ---
 let waveformPeaks = [];
+let waveformPeaksRevision = 0;
+let waveformStaticLayer = null;
+let waveformProgressLayer = null;
+let waveformStaticLayerKey = '';
 
 async function loadRealWaveformPeaks(videoName, count = 180) {
   if (!project || !videoName) {
@@ -4080,6 +4092,7 @@ async function loadRealWaveformPeaks(videoName, count = 180) {
       const data = await res.json();
       if (Array.isArray(data.peaks) && data.peaks.length > 0) {
         waveformPeaks = data.peaks;
+        waveformPeaksRevision++;
         drawMiniWaveform();
         return;
       }
@@ -4099,6 +4112,7 @@ function generateWaveformPeaks(count = 180) {
     val = Math.max(0.12, Math.min(0.95, val));
     waveformPeaks.push(val);
   }
+  waveformPeaksRevision++;
 }
 
 function getCutPoints() {
@@ -4315,16 +4329,15 @@ function drawMiniWaveform() {
   const canvas = document.getElementById('editorWaveformCanvas');
   const player = document.getElementById('editorPlayer');
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  const mainCtx = canvas.getContext('2d');
+  if (!mainCtx) return;
 
   setupWaveformInteractions();
 
   const w = canvas.parentElement ? canvas.parentElement.clientWidth - 20 : 600;
-  canvas.width = Math.max(300, w);
-  canvas.height = 54;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const targetWidth = Math.max(300, Math.floor(w));
+  if (canvas.width !== targetWidth) canvas.width = targetWidth;
+  if (canvas.height !== 54) canvas.height = 54;
 
   if (waveformPeaks.length === 0) {
     generateWaveformPeaks(180);
@@ -4341,10 +4354,25 @@ function drawMiniWaveform() {
   const inX = Math.round(inRatio * canvas.width);
   const outX = Math.round(outRatio * canvas.width);
 
+  const staticKey = `${canvas.width}|${canvas.height}|${waveformPeaksRevision}|${inVal.toFixed(3)}|${outVal.toFixed(3)}`;
+  if (!waveformStaticLayer) waveformStaticLayer = document.createElement('canvas');
+  if (!waveformProgressLayer) waveformProgressLayer = document.createElement('canvas');
+  if (waveformStaticLayer.width !== canvas.width) waveformStaticLayer.width = canvas.width;
+  if (waveformStaticLayer.height !== canvas.height) waveformStaticLayer.height = canvas.height;
+  if (waveformProgressLayer.width !== canvas.width) waveformProgressLayer.width = canvas.width;
+  if (waveformProgressLayer.height !== canvas.height) waveformProgressLayer.height = canvas.height;
+  const redrawStatic = waveformStaticLayerKey !== staticKey;
+  const ctx = redrawStatic ? waveformStaticLayer.getContext('2d') : null;
+  const progressCtx = redrawStatic ? waveformProgressLayer.getContext('2d') : null;
+
   const barWidth = 2.5;
   const gap = 1.5;
   const totalBars = Math.floor(canvas.width / (barWidth + gap));
   const centerY = canvas.height / 2;
+
+  if (redrawStatic && ctx) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  progressCtx?.clearRect(0, 0, canvas.width, canvas.height);
 
   // 1. Vẽ các cột sóng âm
   for (let i = 0; i < totalBars; i++) {
@@ -4356,10 +4384,12 @@ function drawMiniWaveform() {
     const isInsideCut = (x >= inX && x <= outX);
 
     if (isInsideCut) {
-      if (x <= progressX) {
-        ctx.fillStyle = '#38bdf8'; // Đã phát trong vùng cắt: Xanh ngọc sáng
-      } else {
-        ctx.fillStyle = '#818cf8'; // Chưa phát trong vùng cắt: Tím lam sáng
+      ctx.fillStyle = '#818cf8'; // Vùng giữ lại
+      if (progressCtx) {
+        progressCtx.fillStyle = '#38bdf8';
+        progressCtx.beginPath();
+        progressCtx.roundRect(x, centerY - barH / 2, barWidth, barH, 1.2);
+        progressCtx.fill();
       }
     } else {
       ctx.fillStyle = '#334155'; // Ngoài vùng cắt: Xám đen mờ (bị loại bỏ)
@@ -4432,20 +4462,33 @@ function drawMiniWaveform() {
     ctx.fillStyle = '#f472b6';
     ctx.fillText(`${outVal.toFixed(1)}s`, outX + 3, 4);
   }
+    waveformStaticLayerKey = staticKey;
+  }
+
+  mainCtx.clearRect(0, 0, canvas.width, canvas.height);
+  mainCtx.drawImage(waveformStaticLayer, 0, 0);
+  if (progressX > 0) {
+    mainCtx.save();
+    mainCtx.beginPath();
+    mainCtx.rect(0, 0, progressX, canvas.height);
+    mainCtx.clip();
+    mainCtx.drawImage(waveformProgressLayer, 0, 0);
+    mainCtx.restore();
+  }
 
   // 4. Kim chỉ mốc thời gian (Playhead Needle)
-  ctx.strokeStyle = '#f43f5e';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(progressX, 0);
-  ctx.lineTo(progressX, canvas.height);
-  ctx.stroke();
+  mainCtx.strokeStyle = '#f43f5e';
+  mainCtx.lineWidth = 2;
+  mainCtx.beginPath();
+  mainCtx.moveTo(progressX, 0);
+  mainCtx.lineTo(progressX, canvas.height);
+  mainCtx.stroke();
 
   // Đầu kim tròn màu đỏ nổi bật
-  ctx.fillStyle = '#f43f5e';
-  ctx.beginPath();
-  ctx.arc(progressX, 5, 4, 0, Math.PI * 2);
-  ctx.fill();
+  mainCtx.fillStyle = '#f43f5e';
+  mainCtx.beginPath();
+  mainCtx.arc(progressX, 5, 4, 0, Math.PI * 2);
+  mainCtx.fill();
 }
 
 function onWaveformSliderSeek(val) {

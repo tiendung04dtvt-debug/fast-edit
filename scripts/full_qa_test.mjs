@@ -52,7 +52,12 @@ async function api(route, body, timeoutMs = 180000) {
   const text = await response.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
-  return { status: response.status, data };
+  return {
+    status: response.status,
+    data,
+    videoListCache: response.headers.get('x-video-list-cache'),
+    serverTiming: response.headers.get('server-timing')
+  };
 }
 
 async function runProcess(bin, args) {
@@ -152,10 +157,24 @@ try {
   await check('Đọc thư viện video và thời lượng', async () => {
     const response = await api(`/api/video/list?id=${projectId}`);
     assert.equal(response.status, 200);
+    assert.equal(response.videoListCache, 'miss');
     const source = response.data.videos.find(video => video.name === 'qa_source.mp4');
     assert.ok(source);
     assert.ok(Math.abs(source.duration - 6) < 0.2, `duration=${source.duration}`);
-    return `${response.data.videos.length} video; duration=${source.duration.toFixed(3)}s`;
+    const warmTimes = [];
+    let warmAppMs = null;
+    for (let i = 0; i < 5; i++) {
+      const warmStart = Date.now();
+      const warm = await api(`/api/video/list?id=${projectId}`);
+      warmTimes.push(Date.now() - warmStart);
+      assert.equal(warm.status, 200);
+      assert.equal(warm.videoListCache, 'hit');
+      assert.equal(warm.data.videos.length, response.data.videos.length);
+      warmAppMs = Number(warm.serverTiming?.match(/app;dur=([\d.]+)/)?.[1]);
+      assert.ok(Number.isFinite(warmAppMs) && warmAppMs < 10, `warm server processing=${warm.serverTiming}`);
+    }
+    warmTimes.sort((a, b) => a - b);
+    return `${response.data.videos.length} video; duration=${source.duration.toFixed(3)}s; warm median RTT=${warmTimes[2]}ms; server=${warmAppMs.toFixed(2)}ms`;
   });
 
   const waveRoute = `/api/video/waveform-peaks?projectId=${projectId}&videoName=qa_source.mp4&points=60`;
@@ -178,6 +197,9 @@ try {
     await check('Cắt nhanh lossless', async () => {
       data = await postVideo('/api/video/smart-cut', { projectId, videoName: 'qa_source.mp4', start: 1, end: 3, lossless: true });
       assert.ok(data.newDuration >= 1.5 && data.newDuration <= 2.5, `duration=${data.newDuration}`);
+      const list = await api(`/api/video/list?id=${projectId}`);
+      assert.equal(list.videoListCache, 'miss', 'tác vụ tạo media phải vô hiệu hóa cache thư viện');
+      assert.ok(list.data.videos.some(video => video.name === data.fileName), 'video vừa cắt phải xuất hiện trong thư viện');
       return `${data.newDuration.toFixed(3)}s; ${data.processTimeMs}ms`;
     });
     return data?.fileName;
@@ -268,7 +290,14 @@ try {
     const warm = await api('/api/render', project, 120000);
     assert.equal(warm.status, 200, JSON.stringify(warm.data));
     assert.equal(warm.data.cacheHits, 1, JSON.stringify(warm.data));
-    return `cold=${cold.data.totalMs}ms; warm=${warm.data.totalMs}ms; cacheHits=${warm.data.cacheHits}`;
+    const mutedProject = {
+      ...project,
+      scenes: project.scenes.map(scene => ({ ...scene, volume: 0 }))
+    };
+    const muted = await api('/api/render', mutedProject, 120000);
+    assert.equal(muted.status, 200, JSON.stringify(muted.data));
+    assert.equal(muted.data.cacheHits, 0, 'volume=0 phải tạo cache riêng, không dùng cache volume mặc định');
+    return `cold=${cold.data.totalMs}ms; warm=${warm.data.totalMs}ms; muted cacheHits=${muted.data.cacheHits}`;
   });
 
   await check('Cắt/khử ồn/chuẩn hóa loudness bài giảng', async () => {

@@ -8,6 +8,7 @@ import { spawn, exec } from 'node:child_process';
 import crypto from 'node:crypto';
 import { createMediaDurationReader } from './media_duration.mjs';
 import { createFileHashReader } from './file_hash.mjs';
+import { cleanupProjectArtifacts } from './project_housekeeping.mjs';
 import { getSignaturesBatch, planConcatWorkflow } from './video_concat_planner.mjs';
 
 // Ngăn ngừa crash khi chạy ngầm không có cửa sổ console (EPIPE)
@@ -23,6 +24,13 @@ const WINGET_FFMPEG = 'C:\\Users\\OS\\AppData\\Local\\Microsoft\\WinGet\\Package
 const FFMPEG_BIN = process.env.FFMPEG_PATH || (fsSync.existsSync(path.join(ROOT, 'runtime', 'ffmpeg.exe')) ? path.join(ROOT, 'runtime', 'ffmpeg.exe') : (fsSync.existsSync(WINGET_FFMPEG) ? WINGET_FFMPEG : 'ffmpeg'));
 
 await fs.mkdir(DATA, { recursive: true });
+const startupCleanup = await cleanupProjectArtifacts(DATA, {
+  excludeProjectIds: ['6a6021d9-9563-4e7e-a25f-c9b9bfce22c7'],
+  maxAgeMs: 24 * 60 * 60 * 1000
+});
+if (startupCleanup.removedCount > 0) {
+  console.log(`[Startup Housekeeping] Đã dọn ${startupCleanup.removedCount} tệp tạm/cache không hợp lệ cũ (đã quét ${startupCleanup.scannedFiles} tệp).`);
+}
 const send = (res, status, value, type='application/json; charset=utf-8') => {
   if (!res || res.headersSent || res.writableEnded) return;
   try {
@@ -388,7 +396,7 @@ async function computeVisualHash(project, scene, realAudioDuration) {
   const fontSize = String(scene.fontSize || '');
   const subtitleOpts = JSON.stringify(scene.subtitleOpts || {});
   const quizDelaySec = String(scene.quizDelaySec || '');
-  const trimStr = `${scene.start || 0}|${scene.end || 0}|${scene.videoStart || 0}|${scene.videoEnd || 0}|${scene.volume || 1.0}`;
+  const trimStr = `${scene.start ?? 0}|${scene.end ?? 0}|${scene.videoStart ?? 0}|${scene.videoEnd ?? 0}|${scene.volume ?? 1.0}`;
 
   return crypto.createHash('sha256')
     .update(`${templateOrStyle}|${imgHash}|${videoHash}|${trimStr}|${effect}|${cropMode}|${ratio}|${res}|${duration}|${fontSize}|${subtitleOpts}|${quizDelaySec}|${fontStr}|${RENDER_VERSION}`)
@@ -413,6 +421,10 @@ async function probeMediaDuration(filePath) {
 
 const mediaDurationReader = createMediaDurationReader({ probe: probeMediaDuration, maxEntries: 500 });
 const getMediaDuration = (filePath, knownStat = null) => mediaDurationReader.get(filePath, knownStat);
+const videoLibraryCache = new Map();
+const VIDEO_LIBRARY_CACHE_TTL_MS = 3000;
+let activeMutationRequests = 0;
+function invalidateVideoLibraryCache() { videoLibraryCache.clear(); }
 
 async function hasAudioStream(filePath) {
   try {
@@ -705,39 +717,44 @@ async function render(project) {
     tempOutput
   ];
 
-  let concatMethod = 'stream_copy';
-  try {
-    await run(FFMPEG_BIN, copyArgs, { cwd: dir });
-  } catch (copyErr) {
-    console.warn(`[Master Render] Stream copy concat thất bại (${copyErr.message}), kích hoạt fallback re-encode...`);
-    concatMethod = 're_encode_fallback';
-    const is1080p = project.resolution === '1080p';
-    const crf = is1080p ? '20' : '22';
-    const audioBitrate = is1080p ? '192k' : '160k';
-    const fallbackArgs = [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0',
-      '-i', 'concat_list.txt',
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', crf,
-      '-c:a', 'aac',
-      '-b:a', audioBitrate,
-      '-movflags', '+faststart',
-      tempOutput
-    ];
-    await run(FFMPEG_BIN, fallbackArgs, { cwd: dir });
-  }
-
-  // Ghi nguyên tử sang file đầu ra chính thức để không phá hủy video hợp lệ nếu bị hủy giữa chừng
   const tempFullPath = path.join(dir, tempOutput);
   const outFullPath = path.join(dir, output);
-  const tempStat = await fs.stat(tempFullPath);
-  if (tempStat.size < 2000) {
-    await fs.unlink(tempFullPath).catch(() => {});
-    throw new Error('Ghép video bài giảng thất bại (file đầu ra không hợp lệ).');
+  let outputCommitted = false;
+  let concatMethod = 'stream_copy';
+  try {
+    try {
+      await run(FFMPEG_BIN, copyArgs, { cwd: dir });
+    } catch (copyErr) {
+      console.warn(`[Master Render] Stream copy concat thất bại (${copyErr.message}), kích hoạt fallback re-encode...`);
+      concatMethod = 're_encode_fallback';
+      const is1080p = project.resolution === '1080p';
+      const crf = is1080p ? '20' : '22';
+      const audioBitrate = is1080p ? '192k' : '160k';
+      const fallbackArgs = [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'concat', '-safe', '0',
+        '-i', 'concat_list.txt',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', crf,
+        '-c:a', 'aac',
+        '-b:a', audioBitrate,
+        '-movflags', '+faststart',
+        tempOutput
+      ];
+      await run(FFMPEG_BIN, fallbackArgs, { cwd: dir });
+    }
+
+    // Ghi nguyên tử để không thay thế video hợp lệ bằng file dở dang.
+    const tempStat = await fs.stat(tempFullPath);
+    if (tempStat.size < 2000) {
+      throw new Error('Ghép video bài giảng thất bại (file đầu ra không hợp lệ).');
+    }
+    await fs.rename(tempFullPath, outFullPath);
+    outputCommitted = true;
+  } finally {
+    if (!outputCommitted) await fs.unlink(tempFullPath).catch(() => {});
   }
-  await fs.rename(tempFullPath, outFullPath);
 
   const finalDuration = (await getMediaDuration(path.join(dir, output))) || Math.round(totalDuration);
   const totalMs = Date.now() - renderStart;
@@ -766,6 +783,20 @@ setInterval(() => {
 }, 15000);
 
 const server=http.createServer(async (req,res)=>{
+  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+  let mutationFinished = false;
+  if (isMutation) {
+    activeMutationRequests++;
+    invalidateVideoLibraryCache();
+    const finishMutation = () => {
+      if (mutationFinished) return;
+      mutationFinished = true;
+      activeMutationRequests = Math.max(0, activeMutationRequests - 1);
+      invalidateVideoLibraryCache();
+    };
+    res.once('finish', finishMutation);
+    res.once('close', finishMutation);
+  }
   try {
     const url=new URL(req.url,'http://127.0.0.1');
     if(url.pathname==='/api/heartbeat') {
@@ -989,7 +1020,15 @@ const server=http.createServer(async (req,res)=>{
       return;
     }
     if(req.method==='GET' && url.pathname==='/api/video/list') {
+      const listStart = process.hrtime.bigint();
       const projectId = safeId(url.searchParams.get('id') || url.searchParams.get('projectId'));
+      const cacheKey = projectId || '*';
+      const cachedList = videoLibraryCache.get(cacheKey);
+      if (activeMutationRequests === 0 && cachedList && cachedList.expiresAt > Date.now()) {
+        res.setHeader('X-Video-List-Cache', 'hit');
+        res.setHeader('Server-Timing', `app;dur=${Number(process.hrtime.bigint() - listStart) / 1e6}`);
+        return send(res, 200, cachedList.body);
+      }
       const candidateFiles = [];
       const seenNames = new Set();
       try {
@@ -1046,6 +1085,15 @@ const server=http.createServer(async (req,res)=>{
             };
           }
         }));
+        if (activeMutationRequests === 0) {
+          videoLibraryCache.set(cacheKey, {
+            body: JSON.stringify({ ok: true, videos }),
+            expiresAt: Date.now() + VIDEO_LIBRARY_CACHE_TTL_MS
+          });
+          while (videoLibraryCache.size > 16) videoLibraryCache.delete(videoLibraryCache.keys().next().value);
+        }
+        res.setHeader('X-Video-List-Cache', 'miss');
+        res.setHeader('Server-Timing', `app;dur=${Number(process.hrtime.bigint() - listStart) / 1e6}`);
         return send(res, 200, { ok: true, videos });
       } catch (err) {
         return send(res, 500, { error: err.message });

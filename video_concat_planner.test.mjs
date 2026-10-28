@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  planConcatWorkflow, normRotation, extractRotation, getVideoSignature, clearSignatureCache
+  planConcatWorkflow, normRotation, extractRotation, getVideoSignature, getSignaturesBatch, clearSignatureCache
 } from './video_concat_planner.mjs';
 
 const vid = (o = {}) => ({
@@ -145,6 +145,23 @@ const asyncTests = async () => {
     format: { duration: '5' }
   }));
   assert.equal(noRate.audio.sampleRate, 0); n++; console.log('ok - sample_rate thiếu mặc định 0');
+
+  clearSignatureCache();
+  let probeCalls = 0;
+  const batchJson = {
+    streams: [{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1' }],
+    format: { duration: '5' }
+  };
+  const batch = await getSignaturesBatch(
+    ['same.mp4', 'same.mp4', 'other.mp4', 'same.mp4'], 'ffprobe',
+    async () => { probeCalls++; return { out: JSON.stringify(batchJson) }; },
+    () => ({ size: 10, mtimeMs: 1 }), 4
+  );
+  assert.equal(probeCalls, 2);
+  assert.equal(batch.length, 4);
+  assert.equal(batch[0], batch[1]);
+  assert.equal(batch[1], batch[3]);
+  n++; console.log('ok - concat batch chỉ probe một lần cho mỗi nguồn trùng lặp');
 };
 
 await asyncTests();
