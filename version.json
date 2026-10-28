@@ -1,7 +1,7 @@
 {
-  "version": "1.5.0",
-  "updatedAt": "2026-10-28T10:30:00.000Z",
-  "notes": "v1.5.0: Tính năng Làm sáng & Tươi màu da 1-Click (2 mức: Tự nhiên / Sáng rõ, chống cháy sáng highlights).",
+  "version": "1.6.0",
+  "updatedAt": "2026-10-28T12:45:00.000Z",
+  "notes": "v1.6.0: Đề xuất cắt khoảng lặng thông minh (Smart Silence Suggestion) với vùng đệm 0.35s an toàn; giữ nguyên 100% video nguồn; hỗ trợ tùy chỉnh ngưỡng dB và thời gian.",
   "files": [
     "server.mjs",
     "video_concat_planner.mjs",
@@ -9,6 +9,7 @@
     "media_duration.mjs",
     "file_hash.mjs",
     "project_housekeeping.mjs",
+    "silence_detection.mjs",
     "package.json",
     "version.json",
     "public/index.html"

@@ -26,11 +26,12 @@ Mọi bài test đều sử dụng dữ liệu giả lập tự sinh và tự th
 
 | Hạng mục kiểm thử | Lệnh thực thi | Mục tiêu xác nhận |
 | :--- | :--- | :--- |
-| **Full QA Tích Hợp (22 bài)** | `.\runtime\node.exe scripts\full_qa_test.mjs` *(hoặc `run_all_qa.bat`)* | Toàn bộ luồng: Tải video, cắt lossless, lọc ồn, dập phụ đề, PiP, Concat, Loudnorm |
-| **Bộ Unit Tests (31 bài)** | `.\runtime\node.exe video_concat_planner.test.mjs`<br/>`.\runtime\node.exe media_duration.test.mjs`<br/>`.\runtime\node.exe file_hash.test.mjs`<br/>`.\runtime\node.exe project_housekeeping.test.mjs` | Kiểm tra logic cô lập: Lập kế hoạch concat, đọc duration cache, hash SHA-256, tự dọn rác |
+| **Full QA Tích Hợp (25 bài)** | `.\runtime\node.exe scripts\full_qa_test.mjs` *(hoặc `run_all_qa.bat`)* | Toàn bộ luồng: Tải video, cắt lossless/làm sáng, đề xuất khoảng lặng, lọc ồn, dập phụ đề, PiP, Concat, Loudnorm |
+| **Bộ Unit Tests (35 bài)** | `.\runtime\node.exe video_concat_planner.test.mjs`<br/>`.\runtime\node.exe --test silence_detection.test.mjs file_hash.test.mjs media_duration.test.mjs project_housekeeping.test.mjs` | Kiểm tra parser/padding khoảng lặng, lập kế hoạch concat, đọc duration cache, hash SHA-256, tự dọn rác |
 | **Pipeline Âm Thanh** | `.\runtime\node.exe scripts\test_fastEditAudio.mjs` | Lọc ồn DSP, vi fade 10ms, kiểm tra lệch A/V drift (< 1 frame), chuẩn hóa Two-pass Loudnorm |
 | **Ca Biên & Tài Nguyên (Edge QA)** | `.\runtime\node.exe scripts\edge_case_qa.mjs` | File tiếng Việt Unicode (NFC/NFD), ký tự lạ `' # %`, đo Peak RAM 4K, hủy tác vụ dọn `.part` |
 | **Cờ Xoay & Tỉ Lệ Hình** | `.\runtime\node.exe scripts\orientation_qa.mjs` | Bảo toàn cờ xoay Display Matrix 90°, ghép video dọc vào khung 16:9 không méo hình |
+| **Gợi ý khoảng lặng** | Được kiểm tra trong `full_qa_test.mjs`; parser có unit tests riêng | Chỉ phân tích âm thanh; đề xuất mặc định -30 dB / 1,5 giây, chừa 0,35 giây mỗi đầu; không tự sửa video nguồn |
 
 ---
 

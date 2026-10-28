@@ -10,6 +10,7 @@ import { createMediaDurationReader } from './media_duration.mjs';
 import { createFileHashReader } from './file_hash.mjs';
 import { cleanupProjectArtifacts } from './project_housekeeping.mjs';
 import { getSignaturesBatch, planConcatWorkflow } from './video_concat_planner.mjs';
+import { parseSilenceDetectLog } from './silence_detection.mjs';
 
 // Ngăn ngừa crash khi chạy ngầm không có cửa sổ console (EPIPE)
 if (process.stdout && process.stdout.on) process.stdout.on('error', () => {});
@@ -1275,6 +1276,62 @@ const server=http.createServer(async (req,res)=>{
           return send(res,200,{voiceFile:wav,engine:'windows-fallback',warning:e.message,duration:dur ? Math.ceil(dur) : null});
         }
         return send(res,503,{error:`TTS ${engine} chưa sẵn sàng. Hãy cài backend theo tts_backend/README.md. Chi tiết: ${e.message}`});
+      }
+    }
+    if(req.method==='POST' && url.pathname==='/api/detect-silence') {
+      const clientAbort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) clientAbort.abort(); });
+      try {
+        const body = await readJson(req);
+        const projectId = safeId(body.projectId || body.project_id);
+        if (!projectId) return send(res, 400, { error: 'Mã dự án không hợp lệ.' });
+        const videoName = String(body.videoId || body.videoName || body.video_name || '').trim();
+        if (!videoName) return send(res, 400, { error: 'Tên video không hợp lệ.' });
+        const videoFile = await resolveVideoFile(projectId, videoName);
+        if (!videoFile) return send(res, 404, { error: 'Không tìm thấy video nguồn.' });
+
+        const thresholdText = String(body.noiseThreshold ?? '-30dB').trim().toLowerCase().replace(/db$/, '');
+        const thresholdDb = Number(thresholdText);
+        const requestedMinDuration = Number(body.minDuration ?? 1.5);
+        if (!Number.isFinite(thresholdDb) || thresholdDb < -80 || thresholdDb > -5) {
+          return send(res, 400, { error: 'Ngưỡng âm thanh phải nằm trong khoảng -80 đến -5 dB.' });
+        }
+        if (!Number.isFinite(requestedMinDuration) || requestedMinDuration < 0.2 || requestedMinDuration > 30) {
+          return send(res, 400, { error: 'Thời gian im lặng tối thiểu phải nằm trong khoảng 0.2 đến 30 giây.' });
+        }
+        if (!await hasAudioStream(videoFile.fullPath)) {
+          return send(res, 400, { error: 'Video này không có luồng âm thanh để phân tích.' });
+        }
+
+        const totalDuration = await getMediaDuration(videoFile.fullPath);
+        if (!Number.isFinite(totalDuration) || totalDuration <= 0) {
+          return send(res, 400, { error: 'Không xác định được thời lượng video.' });
+        }
+        const minDuration = Math.round(requestedMinDuration * 100) / 100;
+        const startedAt = Date.now();
+        const { err } = await run(FFMPEG_BIN, [
+          '-hide_banner', '-loglevel', 'info', '-threads', '2', '-vn', '-i', videoFile.fullPath,
+          '-af', `silencedetect=noise=${thresholdDb}dB:d=${minDuration}`,
+          '-f', 'null', '-'
+        ], {
+          cwd: projectDir(projectId), windowsHide: true, signal: clientAbort.signal,
+          timeout: Math.max(120000, Math.min(1800000, Math.ceil(totalDuration * 2000)))
+        });
+        const silences = parseSilenceDetectLog(err, totalDuration);
+        return send(res, 200, {
+          status: 'success',
+          count: silences.length,
+          silences,
+          duration: totalDuration,
+          noiseThreshold: `${thresholdDb}dB`,
+          minDuration,
+          safetyPadding: 0.35,
+          processTimeMs: Date.now() - startedAt
+        });
+      } catch (err) {
+        if (clientAbort.signal.aborted) return;
+        console.error('[Silence Suggestion Error]', err);
+        return send(res, 500, { error: `Không thể quét khoảng lặng: ${err.message}` });
       }
     }
     if(req.method==='POST' && url.pathname==='/api/video/auto-silence-cut') {

@@ -1037,7 +1037,7 @@ header {
     </span>
     <button id="btnAppUpdate" onclick="handleUpdateClick()" title="Kiểm tra & Cập nhật phiên bản mới nhất từ GitHub" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:5px 12px;background:#f8fafc;color:#334155;border:1px solid #cbd5e1;border-radius:20px;cursor:pointer;transition:all 0.2s">
       <span id="updateIcon">🔄</span>
-      <span id="updateLabel">Bản v1.4.0</span>
+      <span id="updateLabel">Bản v1.6.0</span>
     </button>
   </div>
   </header>
@@ -1140,10 +1140,11 @@ header {
 
           <!-- BỘ ĐIỀU KHIỂN STUDIO PLAYER BAR (ĐỒNG HỒ SỐ TO RÕ + NÚT IN/OUT) -->
           <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-            <div style="display:flex;align-items:center;gap:6px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <button type="button" class="btn outline" onclick="seekEditorPlayer(0, true)" style="padding:6px 10px;font-size:11px" title="Về đầu video">⏮ 0s</button>
               <button type="button" class="btn outline" onclick="seekEditorPlayer(-5)" style="padding:6px 10px;font-size:11px" title="Lùi lại 5 giây">⏪ -5s</button>
               <button type="button" class="btn primary" onclick="togglePlayEditor()" id="btnPlayPauseEditor" style="padding:6px 16px;font-size:13px;font-weight:700;background:#0f172a;color:#fff">▶ / ⏸</button>
+              <button type="button" id="btnDetectSilence" class="btn outline" onclick="detectSilenceSuggestions()" style="padding:6px 9px;font-size:10.5px;font-weight:800;color:#92400e;border-color:#f59e0b;background:#fffbeb">🔍 Quét đoạn ngập ngừng</button>
               <button type="button" class="btn outline" onclick="seekEditorPlayer(5)" style="padding:6px 10px;font-size:11px" title="Tiến tới 5 giây">⏩ +5s</button>
             </div>
 
@@ -1170,6 +1171,20 @@ header {
               <span id="waveformTimeMarker" style="font-family:monospace;color:#38bdf8">00:00.0</span>
             </div>
             <canvas id="editorWaveformCanvas" class="mini-waveform-canvas" style="height:56px;cursor:pointer;touch-action:none;user-select:none"></canvas>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <details style="font-size:10px;color:#cbd5e1">
+                <summary style="cursor:pointer;user-select:none">⚙ Ngưỡng quét</summary>
+                <div style="display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap">
+                  <label for="silenceNoiseThreshold">Ngưỡng</label>
+                  <select id="silenceNoiseThreshold" style="padding:3px;border-radius:4px">
+                    <option value="-25">-25 dB</option><option value="-30" selected>-30 dB</option><option value="-35">-35 dB</option><option value="-40">-40 dB</option>
+                  </select>
+                  <label for="silenceMinDuration">Tối thiểu</label>
+                  <input id="silenceMinDuration" type="number" min="0.5" max="10" step="0.1" value="1.5" style="width:54px;padding:3px;border-radius:4px"> giây
+                </div>
+              </details>
+            </div>
+            <div id="silenceSuggestionPanel" style="display:none;background:#1c1917;border:1px solid #92400e;border-radius:8px;padding:8px;color:#fef3c7;max-height:220px;overflow:auto"></div>
             <input type="range" id="editorWaveformSlider" class="mini-waveform-slider" min="0" max="100" value="0" step="0.1" oninput="onWaveformSliderSeek(this.value)">
           </div>
 
@@ -4108,8 +4123,21 @@ let waveformPeaksRevision = 0;
 let waveformStaticLayer = null;
 let waveformProgressLayer = null;
 let waveformStaticLayerKey = '';
+let silenceSuggestions = [];
+let silenceSuggestionsRevision = 0;
+let silenceSuggestionsVideoKey = '';
+const selectedSilenceSuggestionIds = new Set();
+let silencePreviewTimer = null;
 
 async function loadRealWaveformPeaks(videoName, count = 180) {
+  const videoKey = `${project?.id || ''}:${videoName || ''}`;
+  if (videoKey !== silenceSuggestionsVideoKey) {
+    silenceSuggestionsVideoKey = videoKey;
+    silenceSuggestions = [];
+    selectedSilenceSuggestionIds.clear();
+    silenceSuggestionsRevision++;
+    renderSilenceSuggestions();
+  }
   if (!project || !videoName) {
     generateWaveformPeaks(count);
     drawMiniWaveform();
@@ -4131,6 +4159,173 @@ async function loadRealWaveformPeaks(videoName, count = 180) {
   }
   generateWaveformPeaks(count);
   drawMiniWaveform();
+}
+
+async function detectSilenceSuggestions() {
+  if (!project || !currentEditorVideo) {
+    toast('Vui lòng chọn video trước khi quét khoảng lặng.');
+    return;
+  }
+  const button = $('#btnDetectSilence');
+  const threshold = $('#silenceNoiseThreshold')?.value || '-30';
+  const minDuration = Number($('#silenceMinDuration')?.value || 1.5);
+  if (!Number.isFinite(minDuration) || minDuration < 0.5 || minDuration > 10) {
+    toast('Thời gian tối thiểu cần nằm trong khoảng 0,5 đến 10 giây.');
+    return;
+  }
+  if (button) { button.disabled = true; button.textContent = '⏳ Đang quét âm thanh...'; }
+  const requestedVideoKey = `${project.id}:${currentEditorVideo.name}`;
+  const task = startEditorTask('Đang phân tích khoảng lặng (không thay đổi video gốc)', () => {
+    if (button) { button.disabled = false; button.textContent = '🔍 Quét lại khoảng ngập ngừng'; }
+  }, {
+    boxId: 'smartCutProgressBox',
+    steps: ['🎧 Đang đọc riêng luồng âm thanh...', '🔍 Đang tìm khoảng dưới ngưỡng âm lượng...', '✓ Đang lập danh sách gợi ý an toàn...'],
+    estSeconds: 4
+  });
+  try {
+    const result = await api('/api/detect-silence', {
+      projectId: project.id,
+      videoId: currentEditorVideo.name,
+      noiseThreshold: `${threshold}dB`,
+      minDuration
+    }, { signal: task.signal });
+    if (requestedVideoKey !== `${project?.id || ''}:${currentEditorVideo?.name || ''}`) return;
+    silenceSuggestions = Array.isArray(result.silences) ? result.silences : [];
+    selectedSilenceSuggestionIds.clear();
+    silenceSuggestionsRevision++;
+    renderSilenceSuggestions(result);
+    drawMiniWaveform();
+    toast(result.count ? `Đã tìm thấy ${result.count} khoảng cần bạn nghe và duyệt.` : 'Không tìm thấy khoảng lặng đủ điều kiện.');
+  } catch (error) {
+    if (error.name !== 'AbortError') toast(`Không quét được khoảng lặng: ${error.message}`);
+  } finally {
+    await finishEditorTask();
+    if (button) { button.disabled = false; button.textContent = '🔍 Quét đoạn ngập ngừng'; }
+  }
+}
+
+function renderSilenceSuggestions(meta = null) {
+  const panel = $('#silenceSuggestionPanel');
+  if (!panel) return;
+  panel.style.display = silenceSuggestions.length ? 'block' : 'none';
+  if (!silenceSuggestions.length) { panel.innerHTML = ''; return; }
+  const cards = silenceSuggestions.map((item, index) => {
+    const checked = selectedSilenceSuggestionIds.has(item.id) ? 'checked' : '';
+    return `<div id="silenceCard_${index}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-bottom:1px solid #44403c;padding:6px 0">
+      <input type="checkbox" ${checked} aria-label="Chọn khoảng ${index + 1} để bỏ" onchange="toggleSilenceSuggestionSelection('${item.id}',this.checked)">
+      <button type="button" onclick="focusSilenceSuggestion('${item.id}')" style="border:0;background:none;color:#fde68a;padding:2px;cursor:pointer;font-weight:700">✂ ${item.duration.toFixed(1)}s · ${formatTimeCode(item.rawStart)}–${formatTimeCode(item.rawEnd)}</button>
+      <span style="font-size:10px;color:#d6d3d1">Đề xuất bỏ ${formatTimeCode(item.cutStart)}–${formatTimeCode(item.cutEnd)}; chừa đệm 0,35s mỗi đầu</span>
+      <button type="button" class="btn outline" onclick="previewSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px">▶ Nghe thử</button>
+      <button type="button" class="btn outline" onclick="removeOneSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px;color:#fdba74;border-color:#b45309">✂ Tạo bản bỏ đoạn này</button>
+      <button type="button" class="btn outline" onclick="dismissSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px">✕ Bỏ qua</button>
+    </div>`;
+  }).join('');
+  const durationInfo = meta?.duration ? ` · Video ${formatDurationHuman(meta.duration)}` : '';
+  panel.innerHTML = `<div style="font-size:11px;font-weight:800;margin-bottom:3px">🔍 ${silenceSuggestions.length} gợi ý${durationInfo}</div>
+    <div style="font-size:10px;color:#d6d3d1">Chỉ là đề xuất dựa trên âm lượng; hãy nghe lại và chọn đoạn muốn bỏ. Video gốc luôn được giữ nguyên.</div>
+    ${cards}
+    <div style="display:flex;align-items:center;gap:8px;padding-top:7px;flex-wrap:wrap">
+      <button type="button" class="btn primary" onclick="removeSelectedSilenceSuggestions()" style="padding:5px 8px;font-size:10px;background:#b45309" ${selectedSilenceSuggestionIds.size ? '' : 'disabled'}>⚡ Tạo video mới, bỏ các khoảng đã chọn (${selectedSilenceSuggestionIds.size})</button>
+      <button type="button" class="btn outline" onclick="dismissAllSilenceSuggestions()" style="padding:5px 8px;font-size:10px">Xóa dấu gợi ý</button>
+    </div>`;
+}
+
+function toggleSilenceSuggestionSelection(id, checked) {
+  const panel = $('#silenceSuggestionPanel');
+  const scrollTop = panel?.scrollTop || 0;
+  if (checked) selectedSilenceSuggestionIds.add(id);
+  else selectedSilenceSuggestionIds.delete(id);
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  if (panel) panel.scrollTop = scrollTop;
+  drawMiniWaveform();
+}
+
+function focusSilenceSuggestion(id) {
+  const item = silenceSuggestions.find(candidate => candidate.id === id);
+  if (!item) return;
+  selectedSilenceSuggestionIds.add(id);
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  drawMiniWaveform();
+  const index = silenceSuggestions.findIndex(candidate => candidate.id === id);
+  $(`#silenceCard_${index}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function previewSilenceSuggestion(id) {
+  const item = silenceSuggestions.find(candidate => candidate.id === id);
+  const player = $('#editorPlayer');
+  if (!item || !player) return;
+  if (silencePreviewTimer) clearTimeout(silencePreviewTimer);
+  player.currentTime = item.rawStart;
+  player.play().catch(() => {});
+  silencePreviewTimer = setTimeout(() => { player.pause(); silencePreviewTimer = null; }, Math.max(250, (item.rawEnd - item.rawStart) * 1000));
+}
+
+function dismissSilenceSuggestion(id) {
+  selectedSilenceSuggestionIds.delete(id);
+  silenceSuggestions = silenceSuggestions.filter(item => item.id !== id);
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  drawMiniWaveform();
+}
+
+function dismissAllSilenceSuggestions() {
+  silenceSuggestions = [];
+  selectedSilenceSuggestionIds.clear();
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  drawMiniWaveform();
+}
+
+async function removeOneSilenceSuggestion(id) {
+  await removeSelectedSilenceSuggestions([id]);
+}
+
+async function removeSelectedSilenceSuggestions(ids = null) {
+  if (!project || !currentEditorVideo) return;
+  const chosen = new Set(ids || selectedSilenceSuggestionIds);
+  const cuts = silenceSuggestions
+    .filter(item => chosen.has(item.id))
+    .map(item => ({ start: item.cutStart, end: item.cutEnd }))
+    .sort((a, b) => a.start - b.start);
+  if (!cuts.length) { toast('Hãy chọn ít nhất một khoảng muốn bỏ.'); return; }
+
+  const duration = Number($('#editorPlayer')?.duration) || Number(currentEditorVideo.duration) || 0;
+  const keepSegments = [];
+  let cursor = 0;
+  for (const cut of cuts) {
+    const start = Math.max(cursor, Math.min(duration, cut.start));
+    const end = Math.max(start, Math.min(duration, cut.end));
+    if (start - cursor >= 0.1) keepSegments.push({ start: cursor, end: start });
+    cursor = Math.max(cursor, end);
+  }
+  if (duration - cursor >= 0.1) keepSegments.push({ start: cursor, end: duration });
+  if (!keepSegments.length) { toast('Không còn đoạn video đủ dài để giữ lại.'); return; }
+
+  pauseAllEditorPlayers();
+  const task = startEditorTask('Đang tạo bản sao bỏ các khoảng đã chọn', () => {}, {
+    boxId: 'smartCutProgressBox',
+    steps: ['✂️ Đang chuẩn bị các đoạn cần giữ...', '🎞️ Đang ghép thành video mới...', '✓ Video gốc vẫn được giữ nguyên...'],
+    estSeconds: 4
+  });
+  try {
+    const result = await api('/api/video/multi-cut', {
+      projectId: project.id,
+      videoName: currentEditorVideo.name,
+      segments: keepSegments
+    }, { signal: task.signal });
+    displayEditorResult(
+      '✂️ Đã tạo bản video bỏ khoảng đã chọn',
+      `Đã giữ ${result.segmentsCount} đoạn và bỏ ${cuts.length} khoảng đã duyệt. Video gốc không bị thay đổi.`,
+      result.outputVideo, result.fileName, result.newDuration
+    );
+    toast('Đã tạo video mới; bản gốc được giữ nguyên.', 4000, true);
+  } catch (error) {
+    if (error.name !== 'AbortError') toast(`Không thể tạo bản cắt: ${error.message}`);
+  } finally {
+    await finishEditorTask();
+  }
 }
 
 function generateWaveformPeaks(count = 180) {
@@ -4278,6 +4473,16 @@ function setupWaveformInteractions() {
   canvas.addEventListener('mousemove', (e) => {
     if (isDraggingTrimHandle) return;
     const { x, dur } = getCanvasPos(e);
+    const silenceHit = silenceSuggestions.find(item => {
+      const startX = (item.cutStart / dur) * canvas.width;
+      const endX = (item.cutEnd / dur) * canvas.width;
+      return x >= startX - 6 && x <= endX + 6;
+    });
+    if (silenceHit) {
+      canvas.style.cursor = 'pointer';
+      canvas.title = `Gợi ý khoảng im lặng ${silenceHit.duration.toFixed(1)}s · Bấm để xem thao tác`;
+      return;
+    }
     const { inVal, outVal } = getCutPoints();
     const inX = (inVal / dur) * canvas.width;
     const outX = (outVal / dur) * canvas.width;
@@ -4308,6 +4513,15 @@ function setupWaveformInteractions() {
     } else if (Math.abs(x - outX) <= 12) {
       isDraggingTrimHandle = 'out';
     } else {
+      const suggestion = silenceSuggestions.find(item => {
+        const startX = (item.cutStart / dur) * canvas.width;
+        const endX = (item.cutEnd / dur) * canvas.width;
+        return x >= startX - 6 && x <= endX + 6;
+      });
+      if (suggestion) {
+        focusSilenceSuggestion(suggestion.id);
+        return;
+      }
       isDraggingTrimHandle = 'seek';
       const player = document.getElementById('editorPlayer');
       if (player) {
@@ -4383,7 +4597,7 @@ function drawMiniWaveform() {
   const inX = Math.round(inRatio * canvas.width);
   const outX = Math.round(outRatio * canvas.width);
 
-  const staticKey = `${canvas.width}|${canvas.height}|${waveformPeaksRevision}|${inVal.toFixed(3)}|${outVal.toFixed(3)}`;
+  const staticKey = `${canvas.width}|${canvas.height}|${waveformPeaksRevision}|${silenceSuggestionsRevision}|${inVal.toFixed(3)}|${outVal.toFixed(3)}`;
   if (!waveformStaticLayer) waveformStaticLayer = document.createElement('canvas');
   if (!waveformProgressLayer) waveformProgressLayer = document.createElement('canvas');
   if (waveformStaticLayer.width !== canvas.width) waveformStaticLayer.width = canvas.width;
@@ -4490,6 +4704,27 @@ function drawMiniWaveform() {
   if (outX < canvas.width - 32) {
     ctx.fillStyle = '#f472b6';
     ctx.fillText(`${outVal.toFixed(1)}s`, outX + 3, 4);
+  }
+
+  // Gợi ý khoảng lặng nằm trên lớp nền tĩnh; playhead chỉ blit lớp này, không vẽ lại waveform.
+  for (const item of silenceSuggestions) {
+    const startX = (item.cutStart / totalDur) * canvas.width;
+    const endX = (item.cutEnd / totalDur) * canvas.width;
+    const bandWidth = Math.max(4, endX - startX);
+    const bandX = Math.max(0, Math.min(canvas.width - bandWidth, startX - Math.max(0, (bandWidth - (endX - startX)) / 2)));
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.28)';
+    ctx.fillRect(bandX, 7, bandWidth, canvas.height - 14);
+    ctx.strokeStyle = selectedSilenceSuggestionIds.has(item.id) ? '#fbbf24' : 'rgba(253, 186, 116, 0.9)';
+    ctx.lineWidth = selectedSilenceSuggestionIds.has(item.id) ? 2 : 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(bandX + 0.5, 7.5, Math.max(1, bandWidth - 1), canvas.height - 15);
+    ctx.setLineDash([]);
+    if (bandWidth >= 28) {
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fef3c7';
+      ctx.fillText(`✂ ${item.duration.toFixed(1)}s`, bandX + 3, centerY);
+    }
   }
     waveformStaticLayerKey = staticKey;
   }

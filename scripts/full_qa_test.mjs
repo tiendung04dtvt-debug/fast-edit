@@ -109,6 +109,7 @@ try {
 
   const sourcePath = path.join(projectDir, 'media', 'qa_source.mp4');
   const cameraPath = path.join(projectDir, 'media', 'qa_camera.mp4');
+  const silenceSourcePath = path.join(projectDir, 'media', 'qa_silence_source.mp4');
   const fixtureArgs = (color, output) => [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-f', 'lavfi', '-i', `color=c=${color}:s=320x180:r=15:d=6`,
@@ -118,6 +119,11 @@ try {
   ];
   await runProcess(FFMPEG, fixtureArgs('0x244477', sourcePath));
   await runProcess(FFMPEG, fixtureArgs('0x337744', cameraPath));
+  await runProcess(FFMPEG, [
+    '-y', '-hide_banner', '-loglevel', 'error', '-i', sourcePath,
+    '-af', "volume=0:enable='between(t,1,3)+between(t,4,5)'",
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '64k', '-shortest', silenceSourcePath
+  ]);
   let uploadedName = null;
   await check('Tải video lên project QA tạm', async () => {
     const bytes = await fs.readFile(sourcePath);
@@ -191,6 +197,40 @@ try {
     assert.equal(response.data.cached, true);
     return `${response.data.count} peaks cached`;
   });
+
+  let silenceSuggestion = null;
+  await check('Đề xuất khoảng lặng có padding, không tự sửa video gốc', async () => {
+    const response = await api('/api/detect-silence', {
+      projectId, videoId: 'qa_silence_source.mp4', noiseThreshold: '-30dB', minDuration: 1.5
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.data));
+    assert.equal(response.data.status, 'success');
+    assert.equal(response.data.count, 1, JSON.stringify(response.data.silences));
+    [silenceSuggestion] = response.data.silences;
+    assert.ok(silenceSuggestion.cutStart - silenceSuggestion.rawStart >= 0.34 && silenceSuggestion.cutStart - silenceSuggestion.rawStart <= 0.36);
+    assert.ok(silenceSuggestion.rawEnd - silenceSuggestion.cutEnd >= 0.34 && silenceSuggestion.rawEnd - silenceSuggestion.cutEnd <= 0.36);
+    assert.ok(silenceSuggestion.duration >= 0.8);
+    await fs.access(silenceSourcePath);
+    return `1 gợi ý; ${silenceSuggestion.rawStart.toFixed(2)}–${silenceSuggestion.rawEnd.toFixed(2)}s; cắt đề xuất ${silenceSuggestion.duration.toFixed(2)}s; đệm 0.35s`;
+  });
+  if (silenceSuggestion) {
+    await check('Duyệt đề xuất tạo video mới, giữ nguyên video nguồn', async () => {
+      const before = await fs.stat(silenceSourcePath);
+      const created = await postVideo('/api/video/multi-cut', {
+        projectId, videoName: 'qa_silence_source.mp4',
+        segments: [
+          { start: 0, end: silenceSuggestion.cutStart },
+          { start: silenceSuggestion.cutEnd, end: 6 }
+        ]
+      });
+      assert.equal(created.segmentsCount, 2);
+      assert.ok(Math.abs(created.newDuration - (6 - silenceSuggestion.duration)) < 0.3, `duration=${created.newDuration}`);
+      const after = await fs.stat(silenceSourcePath);
+      assert.equal(after.size, before.size, 'nguồn không bị ghi đè');
+      assert.equal(after.mtimeMs, before.mtimeMs, 'nguồn không bị sửa');
+      return `video mới ${created.newDuration.toFixed(2)}s; nguồn giữ nguyên ${after.size} bytes`;
+    });
+  }
 
   const cut1 = await (async () => {
     let data;
