@@ -1,34 +1,29 @@
 @echo off
-chcp 65001 >nul
-title Fast Edit - Xuất bản cập nhật lên GitHub
+title Fast Edit - Xuat ban cap nhat len GitHub
 cls
 echo ======================================================================
-echo          🚀 XUẤT BẢN BẢN CẬP NHẬT FAST EDIT LÊN GITHUB
+echo          XUAT BAN BAN CAP NHAT FAST EDIT LEN GITHUB
 echo ======================================================================
 echo.
-echo Khi bạn đẩy bản mới lên, máy của Dì sẽ tự động nhận được thông báo
-echo và chỉ cần 1 click là cập nhật xong (chưa tới 2 giây)!
-echo.
-
-echo [1/2] Kiểm tra mã nguồn...
+echo [1/2] Kiem tra ma nguon...
 git status -s
 
 echo.
-echo [2/2] Đang đẩy lên GitHub (https://github.com/tiendung04dtvt-debug/fast-edit)...
-echo Nếu trình duyệt hiện cửa sổ đăng nhập GitHub, bạn chỉ cần ấn "Authorize" một lần duy nhất.
+echo [2/2] Dang day len GitHub: https://github.com/tiendung04dtvt-debug/fast-edit
+echo Neu trinh duyet hien cua so dang nhap GitHub, ban chi can an "Authorize" 1 lan.
 echo.
 git push -u origin main
 
 if %ERRORLEVEL% EQU 0 (
     echo.
     echo ======================================================================
-    echo  🎉 XUẤT BẢN THÀNH CÔNG LÊN GITHUB!
-    echo  Máy của Dì mở Fast Edit lên sẽ thấy thông báo cập nhật v1.1.0 ngay lập tức!
+    echo  XUAT BAN THANH CONG LEN GITHUB!
+    echo  May cua Di mo Fast Edit len se thay thong bao cap nhat v1.1.0 ngay!
     echo ======================================================================
 ) else (
     echo.
-    echo ⚠️ Đẩy lên GitHub chưa thành công.
-    echo Gợi ý: Hãy kiểm tra kết nối mạng hoặc đăng nhập tài khoản tiendung04dtvt-debug.
+    echo Day len GitHub chua thanh cong.
+    echo Hay kiem tra ket noi mang hoac dang nhap tai khoan tiendung04dtvt-debug.
 )
 
 echo.

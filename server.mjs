@@ -6,6 +6,8 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn, exec } from 'node:child_process';
 import crypto from 'node:crypto';
+import { createMediaDurationReader } from './media_duration.mjs';
+import { createFileHashReader } from './file_hash.mjs';
 import { getSignaturesBatch, planConcatWorkflow } from './video_concat_planner.mjs';
 
 // Ngăn ngừa crash khi chạy ngầm không có cửa sổ console (EPIPE)
@@ -16,14 +18,6 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(ROOT, 'projects');
 const PORT = Number(process.env.PORT || 4177);
 const TTS_PORT = Number(process.env.TTS_PORT || 4178);
-const mediaDurationCache = new Map();
-async function getCachedDuration(fullP, mtimeMs) {
-  const key = `${fullP}:${mtimeMs}`;
-  if (mediaDurationCache.has(key)) return mediaDurationCache.get(key);
-  const dur = await getMediaDuration(fullP);
-  mediaDurationCache.set(key, dur);
-  return dur;
-}
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css', '.js':'text/javascript', '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.wav':'audio/wav', '.mp3':'audio/mpeg', '.mp4':'video/mp4', '.json':'application/json', '.wasm':'application/wasm', '.tflite':'application/octet-stream', '.data':'application/octet-stream' };
 const WINGET_FFMPEG = 'C:\\Users\\OS\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffmpeg.exe';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || (fsSync.existsSync(path.join(ROOT, 'runtime', 'ffmpeg.exe')) ? path.join(ROOT, 'runtime', 'ffmpeg.exe') : (fsSync.existsSync(WINGET_FFMPEG) ? WINGET_FFMPEG : 'ffmpeg'));
@@ -173,14 +167,23 @@ const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
     }, timeout);
   }
 
+  const MAX_STDOUT = 8 * 1024 * 1024;
+  const MAX_STDERR = 256 * 1024;
+  let stdoutOverflow = false;
+
   child.stdout?.on('data', d => {
-    out += d;
     lastActiveTime = Date.now();
+    const text = d.toString();
+    if (out.length + text.length > MAX_STDOUT) {
+      stdoutOverflow = true;
+    } else {
+      out += text;
+    }
   });
   child.stderr?.on('data', d => {
-    const chunk = d.toString();
-    err += chunk;
     lastActiveTime = Date.now();
+    const chunk = d.toString();
+    err = (err + chunk).slice(-MAX_STDERR);
 
     // Phân tích Real-time Progress từ log FFmpeg (chuỗi time=00:00:15.23 speed= 31x)
     if (typeof onProgress === 'function') {
@@ -209,6 +212,9 @@ const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
     cleanup();
     if (aborted || signal?.aborted) {
       return reject(new Error('Thao tác đã bị người dùng dừng lại.'));
+    }
+    if (stdoutOverflow) {
+      return reject(new Error('Đầu ra tiến trình vượt giới hạn bộ nhớ an toàn (8 MB).'));
     }
     code === 0 ? resolve({out,err}) : reject(new Error(err || `${cmd} exited ${code}`));
   });
@@ -345,14 +351,8 @@ function getSystemFont() {
   return { path: 'Arial', size: 0, mtime: 0, drawtext: "font='Arial'" };
 }
 
-async function fileSha256(filePath) {
-  try {
-    const buf = await fs.readFile(filePath);
-    return crypto.createHash('sha256').update(buf).digest('hex');
-  } catch {
-    return '';
-  }
-}
+const fileHashReader = createFileHashReader({ maxEntries: 500 });
+const fileSha256 = filePath => fileHashReader.get(filePath);
 
 function computeAudioHash(scene, extraSettings = {}) {
   const normalizedText = String(scene.text || '').trim().replace(/\s+/g, ' ');
@@ -400,18 +400,18 @@ function computeSceneHash(audioHash, visualHash) {
     .digest('hex');
 }
 
-async function getMediaDuration(filePath) {
+async function probeMediaDuration(filePath) {
   try {
-    const { err } = await run(FFMPEG_BIN, ['-hide_banner', '-i', filePath], { windowsHide: true });
-    const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-    if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
-  } catch (e) {
-    const errText = e.message || '';
-    const m = errText.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-    if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
-  }
-  return null;
+    const { out } = await run(FFPROBE_BIN, [
+      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath
+    ], { timeout: 8000, windowsHide: true });
+    const duration = Number(out.trim());
+    return Number.isFinite(duration) && duration > 0 ? duration : null;
+  } catch { return null; }
 }
+
+const mediaDurationReader = createMediaDurationReader({ probe: probeMediaDuration, maxEntries: 500 });
+const getMediaDuration = (filePath, knownStat = null) => mediaDurationReader.get(filePath, knownStat);
 
 async function hasAudioStream(filePath) {
   try {
@@ -1010,21 +1010,31 @@ const server=http.createServer(async (req,res)=>{
             }
           }
         }
-        const resolved = (await Promise.all(candidateFiles.map(async item => {
+        const available = (await Promise.all(candidateFiles.map(async item => {
           const stat = await fs.stat(item.fullP).catch(() => null);
-          if (!stat) return null;
-          const dur = await getCachedDuration(item.fullP, stat.mtimeMs);
-          return {
-            name: item.f,
-            projectId: item.pId,
-            url: `/projects/${item.pId}/media/${item.f}`,
-            sizeMb: (stat.size / (1024 * 1024)).toFixed(1),
-            duration: dur || 0,
-            mtime: stat.mtimeMs
-          };
+          return stat ? { ...item, stat } : null;
         }))).filter(Boolean);
-        resolved.sort((a, b) => b.mtime - a.mtime);
-        return send(res, 200, { ok: true, videos: resolved.slice(0, 50) });
+        available.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+        const newest = available.slice(0, 50);
+        const videos = new Array(newest.length);
+        let nextIndex = 0;
+        const workerCount = Math.min(3, newest.length);
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (nextIndex < newest.length) {
+            const index = nextIndex++;
+            const item = newest[index];
+            const dur = await getMediaDuration(item.fullP, item.stat);
+            videos[index] = {
+              name: item.f,
+              projectId: item.pId,
+              url: `/projects/${item.pId}/media/${item.f}`,
+              sizeMb: (item.stat.size / (1024 * 1024)).toFixed(1),
+              duration: dur || 0,
+              mtime: item.stat.mtimeMs
+            };
+          }
+        }));
+        return send(res, 200, { ok: true, videos });
       } catch (err) {
         return send(res, 500, { error: err.message });
       }
@@ -1048,7 +1058,8 @@ const server=http.createServer(async (req,res)=>{
             }
           }
         }
-        mediaDurationCache.clear();
+        mediaDurationReader.clear();
+        fileHashReader.clear();
         return send(res, 200, { ok: true, deletedCount });
       } catch (err) {
         return send(res, 500, { error: err.message });
@@ -2144,57 +2155,89 @@ const server=http.createServer(async (req,res)=>{
           } catch {}
         }
 
-        // B. Trích xuất âm thanh Float32 downsampled 1000Hz siêu tốc (< 200ms)
-        console.log(`[Waveform Cache] Đang trích xuất sóng âm thực tế cho: ${vf.fileName}...`);
+        // B. Trích xuất âm thanh Float32 dạng Stream không tốn RAM (< 100KB RAM)
+        console.log(`[Waveform Cache] Đang trích xuất sóng âm dạng stream cho: ${vf.fileName}...`);
         const { spawn } = await import('child_process');
         const ffProc = spawn(FFMPEG_BIN, [
           '-hide_banner',
+          '-threads', String(RECOMMENDED_THREADS),
           '-i', vf.fullPath,
           '-vn', '-ac', '1', '-ar', '1000',
           '-f', 'f32le',
           'pipe:1'
         ], { windowsHide: true });
 
-        const chunks = [];
-        ffProc.stdout.on('data', d => chunks.push(d));
+        if (ffProc.pid && os.constants.priority?.PRIORITY_BELOW_NORMAL) {
+          try { os.setPriority(ffProc.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+        }
 
-        await new Promise((resolve, reject) => {
-          ffProc.on('close', code => (code === 0 || chunks.length > 0) ? resolve() : reject(new Error('FFmpeg exit code ' + code)));
-          ffProc.on('error', reject);
+        const onClientAbort = () => { killProcessTree(ffProc); };
+        clientAbort.signal.addEventListener('abort', onClientAbort, { once: true });
+
+        const dur = (await getMediaDuration(vf.fullPath)) || 60;
+        const totalSamplesEst = Math.max(points, Math.floor(dur * 1000));
+        const blockSize = Math.max(1, Math.floor(totalSamplesEst / points));
+        const peaks = new Float32Array(points).fill(0.18);
+        let sampleCount = 0;
+        let bucketIdx = 0;
+        let currentBucketMax = 0;
+        let globalMax = 0;
+        let unaligned = Buffer.alloc(0);
+
+        ffProc.stdout.on('data', chunk => {
+          const combined = unaligned.length > 0 ? Buffer.concat([unaligned, chunk]) : chunk;
+          const numFloats = Math.floor(combined.length / 4);
+          const remainder = combined.length % 4;
+          unaligned = remainder > 0 ? combined.slice(combined.length - remainder) : Buffer.alloc(0);
+
+          for (let i = 0; i < numFloats; i++) {
+            const val = Math.abs(combined.readFloatLE(i * 4));
+            if (val > currentBucketMax) currentBucketMax = val;
+            sampleCount++;
+
+            if (sampleCount >= blockSize && bucketIdx < points) {
+              peaks[bucketIdx] = currentBucketMax;
+              if (currentBucketMax > globalMax) globalMax = currentBucketMax;
+              bucketIdx++;
+              sampleCount = 0;
+              currentBucketMax = 0;
+            }
+          }
         });
 
-        const buf = Buffer.concat(chunks);
-        const floats = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
-        const numPeaks = points;
-        const peaks = [];
+        await new Promise((resolve, reject) => {
+          ffProc.on('close', () => {
+            clientAbort.signal.removeEventListener('abort', onClientAbort);
+            resolve();
+          });
+          ffProc.on('error', err => {
+            clientAbort.signal.removeEventListener('abort', onClientAbort);
+            reject(err);
+          });
+        });
 
-        if (floats.length === 0) {
-          for (let i = 0; i < numPeaks; i++) peaks.push(0.18);
-        } else {
-          const blockSize = Math.max(1, Math.floor(floats.length / numPeaks));
-          let maxG = 0;
-          for (let i = 0; i < numPeaks; i++) {
-            let bMax = 0;
-            const start = i * blockSize;
-            const end = (i === numPeaks - 1) ? floats.length : start + blockSize;
-            for (let j = start; j < end; j++) {
-              const v = Math.abs(floats[j]);
-              if (v > bMax) bMax = v;
-            }
-            peaks.push(bMax);
-            if (bMax > maxG) maxG = bMax;
-          }
-          const factor = maxG > 0.001 ? 0.95 / maxG : 1.0;
-          for (let i = 0; i < numPeaks; i++) {
-            peaks[i] = Math.max(0.12, Math.min(0.95, Number((peaks[i] * factor).toFixed(3))));
+        if (clientAbort.signal.aborted) return;
+
+        if (bucketIdx < points && currentBucketMax > 0) {
+          while (bucketIdx < points) {
+            peaks[bucketIdx] = currentBucketMax;
+            if (currentBucketMax > globalMax) globalMax = currentBucketMax;
+            bucketIdx++;
           }
         }
 
-        // Ghi vào file cache .peaks để các lần mở sau đọc ngay tức thì
-        await fs.writeFile(cacheFile, JSON.stringify(peaks), 'utf8').catch(() => {});
-        console.log(`[Waveform Cache] Đã lưu ${peaks.length} mốc sóng âm vào ${path.basename(cacheFile)}`);
+        const factor = globalMax > 0.001 ? 0.95 / globalMax : 1.0;
+        const resultPeaks = [];
+        for (let i = 0; i < points; i++) {
+          const normalized = peaks[i] * factor;
+          resultPeaks.push(Math.max(0.12, Math.min(0.95, Number(normalized.toFixed(3)))));
+        }
 
-        return send(res, 200, { ok: true, cached: false, peaks, count: peaks.length });
+        // Ghi vào file cache .peaks để các lần mở sau đọc ngay tức thì
+        await fs.writeFile(cacheFile, JSON.stringify(resultPeaks), 'utf8').catch(() => {});
+        console.log(`[Waveform Cache] Đã lưu ${resultPeaks.length} mốc sóng âm vào ${path.basename(cacheFile)} (Stream Mode O(1) RAM)`);
+
+        return send(res, 200, { ok: true, cached: false, peaks: resultPeaks, count: resultPeaks.length });
       } catch (err) {
         console.error('[Waveform Peaks Error]', err);
         return send(res, 500, { error: 'Lỗi trích xuất waveform: ' + err.message });

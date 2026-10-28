@@ -46,7 +46,8 @@ export const DEFAULTS = {
 
 /* ---------- Tiện ích Điều tiết CPU & File I/O ---------- */
 
-export function run(bin, args) {
+export function run(bin, args, opts = {}) {
+  const { signal, timeout = 600000, ...spawnOpts } = opts;
   return new Promise((resolve, reject) => {
     const isFFmpeg = path.basename(bin).toLowerCase().includes('ffmpeg');
     const finalArgs = [...args];
@@ -54,7 +55,7 @@ export function run(bin, args) {
       finalArgs.unshift('-threads', String(RECOMMENDED_THREADS));
     }
 
-    const p = spawn(bin, finalArgs, { windowsHide: true });
+    const p = spawn(bin, finalArgs, { windowsHide: true, ...spawnOpts });
 
     // Hạ mức ưu tiên xuống BELOW_NORMAL để giữ giao diện Windows luôn mượt mà
     try {
@@ -63,11 +64,80 @@ export function run(bin, args) {
       }
     } catch {}
 
+    const MAX_STDOUT = 8 * 1024 * 1024;
+    const MAX_STDERR = 256 * 1024;
     let out = '', err = '';
-    p.stdout.on('data', d => (out += d));
-    p.stderr.on('data', d => (err += d));
-    p.on('error', reject);
+    let stdoutOverflow = false;
+    let aborted = false;
+    let timer = null;
+
+    const cleanup = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (signal) { signal.removeEventListener('abort', onAbort); }
+    };
+
+    const killProc = () => {
+      if (!p || !p.pid) return;
+      try {
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true });
+        } else {
+          p.kill('SIGKILL');
+        }
+      } catch {}
+    };
+
+    const onAbort = () => {
+      aborted = true;
+      cleanup();
+      killProc();
+      reject(new Error('Thao tác âm thanh đã bị dừng lại.'));
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        killProc();
+        return reject(new Error('Thao tác âm thanh đã bị dừng lại.'));
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    if (timeout > 0) {
+      timer = setTimeout(() => {
+        aborted = true;
+        cleanup();
+        killProc();
+        reject(new Error(`Tác vụ ${path.basename(bin)} vượt quá thời gian tối đa ${Math.round(timeout / 1000)}s`));
+      }, timeout);
+    }
+
+    p.stdout?.on('data', d => {
+      const text = d.toString();
+      if (out.length + text.length > MAX_STDOUT) {
+        stdoutOverflow = true;
+      } else {
+        out += text;
+      }
+    });
+
+    p.stderr?.on('data', d => {
+      const text = d.toString();
+      err = (err + text).slice(-MAX_STDERR);
+    });
+
+    p.on('error', (e) => {
+      cleanup();
+      if (!aborted) reject(e);
+    });
+
     p.on('close', code => {
+      cleanup();
+      if (aborted || signal?.aborted) {
+        return reject(new Error('Thao tác âm thanh đã bị dừng lại.'));
+      }
+      if (stdoutOverflow) {
+        return reject(new Error('Đầu ra tiến trình vượt giới hạn bộ nhớ an toàn (8 MB).'));
+      }
       if (code === 0) resolve({ stdout: out, stderr: err });
       else reject(new Error(`${path.basename(bin)} exit ${code}\n${err.slice(-1500)}`));
     });
