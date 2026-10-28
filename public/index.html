@@ -3381,6 +3381,13 @@ function selectExistingVideo(v) {
   resetSceneDetectState();
 
   const player = $('#editorPlayer');
+  if (player.src) {
+    try {
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+    } catch {}
+  }
   player.src = v.url;
   player.onloadedmetadata = () => {
     const dur = player.duration || v.duration || 0;
@@ -3414,6 +3421,10 @@ function backToVideoSelection() {
   hideActiveTaskBanner();
 
   pauseAllEditorPlayers();
+  const p1 = $('#editorPlayer');
+  const p2 = $('#editorResultPlayer');
+  if (p1) { try { p1.pause(); p1.removeAttribute('src'); p1.load(); } catch {} }
+  if (p2) { try { p2.pause(); p2.removeAttribute('src'); p2.load(); } catch {} }
   $('#editorWorkspace').style.display = 'none';
   $('#editorEmptyState').style.display = 'block';
   loadProjectVideosList();

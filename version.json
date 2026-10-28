@@ -1,7 +1,7 @@
 {
-  "version": "1.2.1",
-  "updatedAt": "2026-10-28T08:52:00.000Z",
-  "notes": "v1.2.1: Tối ưu bộ nhớ Waveform dạng Stream O(1) RAM, chặn tràn chuỗi log tiến trình, bảo vệ AbortSignal toàn diện.",
+  "version": "1.2.2",
+  "updatedAt": "2026-10-28T08:58:00.000Z",
+  "notes": "v1.2.2: Master Render ghi nguyên tử .part chống hỏng file, thêm trim/volume vào cache key, giải phóng decoder thẻ video khi đổi tệp.",
   "files": [
     "server.mjs",
     "video_concat_planner.mjs",

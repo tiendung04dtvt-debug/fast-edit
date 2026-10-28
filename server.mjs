@@ -388,9 +388,10 @@ async function computeVisualHash(project, scene, realAudioDuration) {
   const fontSize = String(scene.fontSize || '');
   const subtitleOpts = JSON.stringify(scene.subtitleOpts || {});
   const quizDelaySec = String(scene.quizDelaySec || '');
+  const trimStr = `${scene.start || 0}|${scene.end || 0}|${scene.videoStart || 0}|${scene.videoEnd || 0}|${scene.volume || 1.0}`;
 
   return crypto.createHash('sha256')
-    .update(`${templateOrStyle}|${imgHash}|${videoHash}|${effect}|${cropMode}|${ratio}|${res}|${duration}|${fontSize}|${subtitleOpts}|${quizDelaySec}|${fontStr}|${RENDER_VERSION}`)
+    .update(`${templateOrStyle}|${imgHash}|${videoHash}|${trimStr}|${effect}|${cropMode}|${ratio}|${res}|${duration}|${fontSize}|${subtitleOpts}|${quizDelaySec}|${fontStr}|${RENDER_VERSION}`)
     .digest('hex');
 }
 
@@ -693,6 +694,7 @@ async function render(project) {
 
   // Bước 3: Ghép nối Stream Copy (-c copy)
   const output = `${cleanName(project.title)}.mp4`;
+  const tempOutput = `${cleanName(project.title)}.part_${Date.now()}.mp4`;
   const copyStart = Date.now();
   const copyArgs = [
     '-y', '-hide_banner', '-loglevel', 'error',
@@ -700,7 +702,7 @@ async function render(project) {
     '-i', 'concat_list.txt',
     '-c', 'copy',
     '-movflags', '+faststart',
-    output
+    tempOutput
   ];
 
   let concatMethod = 'stream_copy';
@@ -722,10 +724,20 @@ async function render(project) {
       '-c:a', 'aac',
       '-b:a', audioBitrate,
       '-movflags', '+faststart',
-      output
+      tempOutput
     ];
     await run(FFMPEG_BIN, fallbackArgs, { cwd: dir });
   }
+
+  // Ghi nguyên tử sang file đầu ra chính thức để không phá hủy video hợp lệ nếu bị hủy giữa chừng
+  const tempFullPath = path.join(dir, tempOutput);
+  const outFullPath = path.join(dir, output);
+  const tempStat = await fs.stat(tempFullPath);
+  if (tempStat.size < 2000) {
+    await fs.unlink(tempFullPath).catch(() => {});
+    throw new Error('Ghép video bài giảng thất bại (file đầu ra không hợp lệ).');
+  }
+  await fs.rename(tempFullPath, outFullPath);
 
   const finalDuration = (await getMediaDuration(path.join(dir, output))) || Math.round(totalDuration);
   const totalMs = Date.now() - renderStart;
