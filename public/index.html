@@ -1135,7 +1135,12 @@ header {
 
           <!-- KHUNG PHÁT VIDEO CHÍNH -->
           <div style="position:relative;background:#000;border-radius:12px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,0.2)">
-            <video id="editorPlayer" controls style="width:100%;max-height:410px;object-fit:contain;background:#000;display:block"></video>
+            <video id="editorPlayer" controls style="width:100%;max-height:410px;object-fit:contain;background:#000;display:block;transition:filter 0.2s ease"></video>
+            <!-- Badge xem trước màu sắc trên video (nhấn giữ để so sánh bản gốc) -->
+            <div id="videoLightingPreviewBadge" onmousedown="onComparePreviewDown(event)" onmouseup="onComparePreviewUp(event)" onmouseleave="onComparePreviewUp(event)" ontouchstart="onComparePreviewDown(event)" ontouchend="onComparePreviewUp(event)" style="display:none;position:absolute;top:10px;right:10px;background:rgba(15,23,42,0.85);backdrop-filter:blur(6px);border:1.5px solid rgba(251,191,36,0.8);color:#fef3c7;font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;cursor:pointer;user-select:none;z-index:10;box-shadow:0 4px 14px rgba(0,0,0,0.4);align-items:center;gap:6px;transition:all 0.15s" title="Nhấn giữ chuột vào đây để so sánh với video gốc">
+              <span id="videoLightingBadgeText">✨ Đang xem trước: 🌸 Tự nhiên</span>
+              <span style="font-size:9.5px;color:#fde68a;background:rgba(255,255,255,0.15);padding:1px 6px;border-radius:10px">(Nhấn giữ xem gốc)</span>
+            </div>
           </div>
 
           <!-- BỘ ĐIỀU KHIỂN STUDIO PLAYER BAR (ĐỒNG HỒ SỐ TO RÕ + NÚT IN/OUT) -->
@@ -1144,7 +1149,9 @@ header {
               <button type="button" class="btn outline" onclick="seekEditorPlayer(0, true)" style="padding:6px 10px;font-size:11px" title="Về đầu video">⏮ 0s</button>
               <button type="button" class="btn outline" onclick="seekEditorPlayer(-5)" style="padding:6px 10px;font-size:11px" title="Lùi lại 5 giây">⏪ -5s</button>
               <button type="button" class="btn primary" onclick="togglePlayEditor()" id="btnPlayPauseEditor" style="padding:6px 16px;font-size:13px;font-weight:700;background:#0f172a;color:#fff">▶ / ⏸</button>
-              <button type="button" id="btnDetectSilence" class="btn outline" onclick="detectSilenceSuggestions()" style="padding:6px 9px;font-size:10.5px;font-weight:800;color:#92400e;border-color:#f59e0b;background:#fffbeb">🔍 Quét đoạn ngập ngừng</button>
+              <button type="button" id="btnDetectSilence" class="btn" onclick="detectSilenceSuggestions()" style="padding:6px 12px;font-size:11.5px;font-weight:800;color:#92400e;border:1.5px solid #f59e0b;background:#fef3c7;border-radius:8px;box-shadow:0 1px 4px rgba(245,158,11,0.25);cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all 0.15s" title="Tự động phát hiện các đoạn giáo viên ngập ngừng, lật giáo án, uống nước để cắt bỏ nhanh">
+                <span>🪄 Quét đoạn ngập ngừng (AI)</span>
+              </button>
               <button type="button" class="btn outline" onclick="seekEditorPlayer(5)" style="padding:6px 10px;font-size:11px" title="Tiến tới 5 giây">⏩ +5s</button>
             </div>
 
@@ -1171,22 +1178,27 @@ header {
               <span id="waveformTimeMarker" style="font-family:monospace;color:#38bdf8">00:00.0</span>
             </div>
             <canvas id="editorWaveformCanvas" class="mini-waveform-canvas" style="height:56px;cursor:pointer;touch-action:none;user-select:none"></canvas>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-              <details style="font-size:10px;color:#cbd5e1">
-                <summary style="cursor:pointer;user-select:none">⚙ Ngưỡng quét</summary>
-                <div style="display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap">
-                  <label for="silenceNoiseThreshold">Ngưỡng</label>
-                  <select id="silenceNoiseThreshold" style="padding:3px;border-radius:4px">
-                    <option value="-25">-25 dB</option><option value="-30" selected>-30 dB</option><option value="-35">-35 dB</option><option value="-40">-40 dB</option>
+            <input type="range" id="editorWaveformSlider" class="mini-waveform-slider" min="0" max="100" value="0" step="0.1" oninput="onWaveformSliderSeek(this.value)">
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:2px">
+              <details style="font-size:10px;color:#94a3b8">
+                <summary style="cursor:pointer;user-select:none">⚙️ Tùy chỉnh độ nhạy quét ngập ngừng</summary>
+                <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+                  <label for="silenceNoiseThreshold">Ngưỡng âm lượng:</label>
+                  <select id="silenceNoiseThreshold" style="padding:2px 4px;border-radius:4px;background:#1e293b;color:#f8fafc;border:1px solid #475569">
+                    <option value="-25">-25 dB (ồn)</option>
+                    <option value="-30" selected>-30 dB (tiêu chuẩn)</option>
+                    <option value="-35">-35 dB (yên tĩnh)</option>
+                    <option value="-40">-40 dB (phòng thu)</option>
                   </select>
-                  <label for="silenceMinDuration">Tối thiểu</label>
-                  <input id="silenceMinDuration" type="number" min="0.5" max="10" step="0.1" value="1.5" style="width:54px;padding:3px;border-radius:4px"> giây
+                  <label for="silenceMinDuration">Dừng tối thiểu:</label>
+                  <input id="silenceMinDuration" type="number" min="0.5" max="10" step="0.1" value="1.5" style="width:48px;padding:2px 4px;border-radius:4px;background:#1e293b;color:#f8fafc;border:1px solid #475569"> giây
                 </div>
               </details>
             </div>
-            <div id="silenceSuggestionPanel" style="display:none;background:#1c1917;border:1px solid #92400e;border-radius:8px;padding:8px;color:#fef3c7;max-height:220px;overflow:auto"></div>
-            <input type="range" id="editorWaveformSlider" class="mini-waveform-slider" min="0" max="100" value="0" step="0.1" oninput="onWaveformSliderSeek(this.value)">
           </div>
+
+          <!-- BẢNG ĐỀ XUẤT CẮT KHOẢNG LẶNG (HIỂN THỊ RÕ RÀNG, ẤM ÁP, DỄ DÙNG) -->
+          <div id="silenceSuggestionPanel" style="display:none;margin-top:2px"></div>
 
           <div style="font-size:11.5px;color:#475569;line-height:1.5;background:#f1f5f9;padding:10px 14px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <div>💡 <strong>Mẹo cắt nhanh:</strong> Kéo <strong>2 đầu thanh trắng</strong> trên làn sóng âm hoặc bấm <strong>📍 Đặt [In] / [Out]</strong> để chọn đoạn video cần giữ.</div>
@@ -1297,21 +1309,45 @@ header {
                 </label>
               </div>
 
-              <!-- TÙY CHỌN LÀM SÁNG & CÂN MÀU: MẶC ĐỊNH TẮT ĐỂ GIỮ CẮT LOSSLESS -->
-              <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:7px">
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;user-select:none;margin:0">
-                  <input type="checkbox" id="chkVideoLighting" onchange="updateLightingOptionUI()" style="width:16px;height:16px;margin-top:2px;accent-color:#ea580c;cursor:pointer">
-                  <div>
-                    <div style="font-size:12px;font-weight:800;color:#9a3412">🌸 Làm sáng & tươi màu da <span style="font-weight:600;color:#7c2d12">(điều chỉnh toàn khung hình)</span></div>
-                    <div style="font-size:10.5px;color:#9a3412">Mặc định tắt. Khi bật, video sẽ được mã hóa lại nên thời gian xuất lâu hơn cắt siêu tốc.</div>
+              <!-- BỘ CHỌN LÀM SÁNG & TƯƠI MÀU DA (3 MỨC BẤM 1 CHẠM + XEM TRƯỚC TRỰC TIẾP) -->
+              <div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">
+                  <div style="font-size:12px;font-weight:800;color:#9a3412;display:flex;align-items:center;gap:6px">
+                    <span>🌸 Làm sáng & Tươi màu da</span>
+                    <span id="lightingLiveTag" style="font-size:9.5px;font-weight:700;padding:2px 7px;background:#ffedd5;color:#c2410c;border:1px solid #fdba74;border-radius:10px">⚡ Giữ gốc (Lossless)</span>
                   </div>
-                </label>
-                <div id="videoLightingControls" style="display:none;padding-left:24px">
-                  <label for="videoLightingLevel" style="font-size:11px;font-weight:700;color:#7c2d12;margin-right:6px">Mức độ:</label>
-                  <select id="videoLightingLevel" style="padding:5px 8px;border:1px solid #fdba74;border-radius:6px;background:#fff;color:#7c2d12;font-size:11px;font-weight:700">
-                    <option value="natural" selected>🌤️ Tự nhiên (khuyên dùng)</option>
-                    <option value="bright">☀️ Sáng rõ (phòng tối)</option>
-                  </select>
+                  <small style="font-size:10.5px;color:#9a3412" id="lightingHintText">Cắt siêu tốc 1s</small>
+                </div>
+
+                <!-- 3 Thẻ lựa chọn bấm 1 chạm -->
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px" id="lightingModeGroup">
+                  <button type="button" id="btnLighting_none" onclick="selectLightingMode('none')" style="padding:7px 4px;font-size:11px;font-weight:800;border:2px solid #ea580c;background:#fff7ed;color:#ea580c;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;box-shadow:0 1px 4px rgba(234,88,12,0.15);transition:all 0.15s">
+                    <span>⚡ Nguyên bản</span>
+                    <span style="font-size:9px;font-weight:600;opacity:0.85">Gốc (Siêu tốc)</span>
+                  </button>
+                  <button type="button" id="btnLighting_natural" onclick="selectLightingMode('natural')" style="padding:7px 4px;font-size:11px;font-weight:700;border:1px solid #fed7aa;background:#fff;color:#78350f;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;transition:all 0.15s">
+                    <span>🌸 Tự nhiên</span>
+                    <span style="font-size:9px;font-weight:600;opacity:0.85">Đẹp da (Khuyên dùng)</span>
+                  </button>
+                  <button type="button" id="btnLighting_bright" onclick="selectLightingMode('bright')" style="padding:7px 4px;font-size:11px;font-weight:700;border:1px solid #fed7aa;background:#fff;color:#78350f;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;transition:all 0.15s">
+                    <span>☀️ Sáng rõ</span>
+                    <span style="font-size:9px;font-weight:600;opacity:0.85">Ngược sáng / Tối</span>
+                  </button>
+                </div>
+
+                <!-- Input ẩn để tương thích 100% với QA scripts và logic hiện tại -->
+                <div style="display:none">
+                  <input type="checkbox" id="chkVideoLighting" onchange="updateLightingOptionUI()">
+                  <div id="videoLightingControls">
+                    <select id="videoLightingLevel">
+                      <option value="natural" selected>natural</option>
+                      <option value="bright">bright</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style="font-size:10.5px;color:#9a3412;line-height:1.4" id="lightingLivePreviewMsg">
+                  💡 <strong>Xem trước tức thì:</strong> Bấm <strong>🌸 Tự nhiên</strong> hoặc <strong>☀️ Sáng rõ</strong> để thấy màu da sáng hồng trên khung video phía trên!
                 </div>
               </div>
 
@@ -3870,12 +3906,87 @@ async function runSmartCut() {
   }
 }
 
+let currentLightingMode = 'none';
+
+function selectLightingMode(mode) {
+  currentLightingMode = mode || 'none';
+  const chk = $('#chkVideoLighting');
+  const sel = $('#videoLightingLevel');
+  const tag = $('#lightingLiveTag');
+  const hint = $('#lightingHintText');
+  const msg = $('#lightingLivePreviewMsg');
+  const player = $('#editorPlayer');
+  const badge = $('#videoLightingPreviewBadge');
+  const badgeText = $('#videoLightingBadgeText');
+  const btnSmartCut = $('#btnRunSmartCut');
+
+  // Cập nhật trạng thái 3 nút lựa chọn
+  ['none', 'natural', 'bright'].forEach(m => {
+    const btn = $(`#btnLighting_${m}`);
+    if (!btn) return;
+    if (m === currentLightingMode) {
+      btn.style.border = '2px solid #ea580c';
+      btn.style.background = '#fff7ed';
+      btn.style.color = '#ea580c';
+      btn.style.fontWeight = '800';
+      btn.style.boxShadow = '0 2px 6px rgba(234,88,12,0.2)';
+    } else {
+      btn.style.border = '1px solid #fed7aa';
+      btn.style.background = '#fff';
+      btn.style.color = '#78350f';
+      btn.style.fontWeight = '700';
+      btn.style.boxShadow = 'none';
+    }
+  });
+
+  // Đồng bộ với input ẩn cho tương thích
+  if (chk) chk.checked = (currentLightingMode !== 'none');
+  if (sel && currentLightingMode !== 'none') sel.value = currentLightingMode;
+
+  // Áp dụng bộ lọc xem trước Live Preview trên khung video
+  if (currentLightingMode === 'natural') {
+    if (player) player.style.filter = 'brightness(1.06) contrast(1.04) saturate(1.06)';
+    if (badge) badge.style.display = 'inline-flex';
+    if (badgeText) badgeText.textContent = '✨ Đang xem trước: 🌸 Tự nhiên';
+    if (tag) { tag.textContent = '🌸 Tự nhiên (Xem trước)'; tag.style.background = '#fed7aa'; tag.style.color = '#9a3412'; }
+    if (hint) hint.textContent = 'Mã hóa lại nâng sáng';
+    if (msg) msg.innerHTML = '✨ <strong>Đang xem trước:</strong> Da sáng hồng hào tự nhiên, bảo toàn chi tiết (không bị cháy sáng).';
+    if (btnSmartCut) btnSmartCut.innerHTML = '🌸 Cắt & Làm sáng video';
+  } else if (currentLightingMode === 'bright') {
+    if (player) player.style.filter = 'brightness(1.14) contrast(1.06) saturate(1.08)';
+    if (badge) badge.style.display = 'inline-flex';
+    if (badgeText) badgeText.textContent = '✨ Đang xem trước: ☀️ Sáng rõ';
+    if (tag) { tag.textContent = '☀️ Sáng rõ (Xem trước)'; tag.style.background = '#fef08a'; tag.style.color = '#854d0e'; }
+    if (hint) hint.textContent = 'Mã hóa lại nâng sáng';
+    if (msg) msg.innerHTML = '☀️ <strong>Đang xem trước:</strong> Tăng sáng mạnh, rất thích hợp khi quay phòng tối hoặc ngược sáng.';
+    if (btnSmartCut) btnSmartCut.innerHTML = '☀️ Cắt & Làm sáng rõ video';
+  } else {
+    if (player) player.style.filter = 'none';
+    if (badge) badge.style.display = 'none';
+    if (tag) { tag.textContent = '⚡ Giữ gốc (Lossless)'; tag.style.background = '#ffedd5'; tag.style.color = '#c2410c'; }
+    if (hint) hint.textContent = 'Cắt siêu tốc 1s';
+    if (msg) msg.innerHTML = '💡 <strong>Xem trước tức thì:</strong> Bấm <strong>🌸 Tự nhiên</strong> hoặc <strong>☀️ Sáng rõ</strong> để thấy màu da sáng hồng trên khung video phía trên!';
+    if (btnSmartCut) btnSmartCut.innerHTML = '🚀 Cắt phân đoạn ngay';
+  }
+}
+
+function onComparePreviewDown(e) {
+  if (e) e.preventDefault();
+  const player = $('#editorPlayer');
+  if (player) player.style.filter = 'none';
+  const badgeText = $('#videoLightingBadgeText');
+  if (badgeText) badgeText.textContent = '🔄 Đang hiển thị bản gốc';
+}
+
+function onComparePreviewUp(e) {
+  if (e) e.preventDefault();
+  selectLightingMode(currentLightingMode);
+}
+
 function updateLightingOptionUI() {
   const enabled = $('#chkVideoLighting')?.checked === true;
-  const controls = $('#videoLightingControls');
-  if (controls) controls.style.display = enabled ? 'block' : 'none';
-  const button = $('#btnRunSmartCut');
-  if (button) button.innerHTML = enabled ? '🌸 Cắt & làm sáng video' : '🚀 Cắt phân đoạn ngay';
+  const level = enabled ? ($('#videoLightingLevel')?.value || 'natural') : 'none';
+  selectLightingMode(level);
 }
 
 async function runMultiCut() {
@@ -4192,42 +4303,115 @@ async function detectSilenceSuggestions() {
     if (requestedVideoKey !== `${project?.id || ''}:${currentEditorVideo?.name || ''}`) return;
     silenceSuggestions = Array.isArray(result.silences) ? result.silences : [];
     selectedSilenceSuggestionIds.clear();
+    // Tự động chọn tất cả để người dùng có thể cắt 1 chạm ngay
+    silenceSuggestions.forEach(item => selectedSilenceSuggestionIds.add(item.id));
     silenceSuggestionsRevision++;
     renderSilenceSuggestions(result);
     drawMiniWaveform();
-    toast(result.count ? `Đã tìm thấy ${result.count} khoảng cần bạn nghe và duyệt.` : 'Không tìm thấy khoảng lặng đủ điều kiện.');
+    const totalSec = silenceSuggestions.reduce((acc, s) => acc + (s.duration || 0), 0);
+    toast(result.count ? `🎉 Tìm thấy ${result.count} đoạn ngập ngừng (tiết kiệm ~${totalSec.toFixed(1)}s)!` : 'Tuyệt vời! Không phát hiện đoạn ngập ngừng kéo dài nào.');
   } catch (error) {
     if (error.name !== 'AbortError') toast(`Không quét được khoảng lặng: ${error.message}`);
   } finally {
     await finishEditorTask();
-    if (button) { button.disabled = false; button.textContent = '🔍 Quét đoạn ngập ngừng'; }
+    if (button) { button.disabled = false; button.innerHTML = '<span>🪄 Quét đoạn ngập ngừng (AI)</span>'; }
   }
 }
+
+function selectAllSilenceSuggestions() {
+  silenceSuggestions.forEach(item => selectedSilenceSuggestionIds.add(item.id));
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  drawMiniWaveform();
+}
+
+function deselectAllSilenceSuggestions() {
+  selectedSilenceSuggestionIds.clear();
+  silenceSuggestionsRevision++;
+  renderSilenceSuggestions();
+  drawMiniWaveform();
+}
+
+let currentPreviewingSilenceId = null;
 
 function renderSilenceSuggestions(meta = null) {
   const panel = $('#silenceSuggestionPanel');
   if (!panel) return;
   panel.style.display = silenceSuggestions.length ? 'block' : 'none';
   if (!silenceSuggestions.length) { panel.innerHTML = ''; return; }
+
+  const totalPossibleTime = silenceSuggestions.reduce((sum, item) => sum + (item.duration || 0), 0);
+  const selectedCuts = silenceSuggestions.filter(item => selectedSilenceSuggestionIds.has(item.id));
+  const totalSelectedTime = selectedCuts.reduce((sum, item) => sum + (item.duration || 0), 0);
+
   const cards = silenceSuggestions.map((item, index) => {
-    const checked = selectedSilenceSuggestionIds.has(item.id) ? 'checked' : '';
-    return `<div id="silenceCard_${index}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-bottom:1px solid #44403c;padding:6px 0">
-      <input type="checkbox" ${checked} aria-label="Chọn khoảng ${index + 1} để bỏ" onchange="toggleSilenceSuggestionSelection('${item.id}',this.checked)">
-      <button type="button" onclick="focusSilenceSuggestion('${item.id}')" style="border:0;background:none;color:#fde68a;padding:2px;cursor:pointer;font-weight:700">✂ ${item.duration.toFixed(1)}s · ${formatTimeCode(item.rawStart)}–${formatTimeCode(item.rawEnd)}</button>
-      <span style="font-size:10px;color:#d6d3d1">Đề xuất bỏ ${formatTimeCode(item.cutStart)}–${formatTimeCode(item.cutEnd)}; chừa đệm 0,35s mỗi đầu</span>
-      <button type="button" class="btn outline" onclick="previewSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px">▶ Nghe thử</button>
-      <button type="button" class="btn outline" onclick="removeOneSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px;color:#fdba74;border-color:#b45309">✂ Tạo bản bỏ đoạn này</button>
-      <button type="button" class="btn outline" onclick="dismissSilenceSuggestion('${item.id}')" style="padding:3px 6px;font-size:10px">✕ Bỏ qua</button>
+    const isChecked = selectedSilenceSuggestionIds.has(item.id);
+    const isPlaying = currentPreviewingSilenceId === item.id;
+    return `<div id="silenceCard_${index}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:#ffffff;border:1.5px solid ${isChecked ? '#f59e0b' : '#e2e8f0'};border-radius:8px;padding:8px 12px;margin-bottom:6px;transition:all 0.15s;box-shadow:${isChecked ? '0 2px 6px rgba(245,158,11,0.12)' : 'none'}">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;margin:0;flex:1;min-width:0">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} aria-label="Chọn khoảng ${index + 1} để bỏ" onchange="toggleSilenceSuggestionSelection('${item.id}',this.checked)" style="width:16px;height:16px;accent-color:#d97706;cursor:pointer">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;border:1px solid #fde68a">
+            ✂ Bỏ ${item.duration.toFixed(1)}s
+          </span>
+          <span style="font-family:monospace;font-size:12px;font-weight:700;color:#1e293b">
+            ${formatTimeCode(item.cutStart)} ➔ ${formatTimeCode(item.cutEnd)}
+          </span>
+          <span style="font-size:10px;color:#64748b">
+            (Đệm giữ an toàn 0.35s)
+          </span>
+        </div>
+      </label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button type="button" class="btn outline" id="btnPreviewSilence_${item.id}" onclick="previewSilenceSuggestion('${item.id}')" style="padding:4px 9px;font-size:11px;font-weight:700;border-color:${isPlaying ? '#f59e0b' : '#cbd5e1'};color:${isPlaying ? '#92400e' : '#1e293b'};background:${isPlaying ? '#fef3c7' : '#f8fafc'}" title="Nghe thử đúng đoạn ngập ngừng này">
+          ${isPlaying ? '⏸ Dừng' : '▶ Nghe thử'}
+        </button>
+        <button type="button" class="btn outline" onclick="dismissSilenceSuggestion('${item.id}')" style="padding:4px 8px;font-size:11px;color:#dc2626;border-color:#fca5a5;background:#fff" title="Giữ lại đoạn này, không cắt bỏ">
+          ✕ Giữ lại
+        </button>
+      </div>
     </div>`;
   }).join('');
-  const durationInfo = meta?.duration ? ` · Video ${formatDurationHuman(meta.duration)}` : '';
-  panel.innerHTML = `<div style="font-size:11px;font-weight:800;margin-bottom:3px">🔍 ${silenceSuggestions.length} gợi ý${durationInfo}</div>
-    <div style="font-size:10px;color:#d6d3d1">Chỉ là đề xuất dựa trên âm lượng; hãy nghe lại và chọn đoạn muốn bỏ. Video gốc luôn được giữ nguyên.</div>
-    ${cards}
-    <div style="display:flex;align-items:center;gap:8px;padding-top:7px;flex-wrap:wrap">
-      <button type="button" class="btn primary" onclick="removeSelectedSilenceSuggestions()" style="padding:5px 8px;font-size:10px;background:#b45309" ${selectedSilenceSuggestionIds.size ? '' : 'disabled'}>⚡ Tạo video mới, bỏ các khoảng đã chọn (${selectedSilenceSuggestionIds.size})</button>
-      <button type="button" class="btn outline" onclick="dismissAllSilenceSuggestions()" style="padding:5px 8px;font-size:10px">Xóa dấu gợi ý</button>
-    </div>`;
+
+  panel.innerHTML = `
+    <div style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:12px;padding:12px 14px;box-shadow:0 4px 14px rgba(245,158,11,0.12)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:13px;font-weight:800;color:#92400e;display:flex;align-items:center;gap:5px">
+            🪄 Tìm thấy ${silenceSuggestions.length} đoạn ngập ngừng
+          </span>
+          <span style="background:#d97706;color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:12px">
+            ⏱️ Tiết kiệm được ${totalSelectedTime.toFixed(1)}s
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button type="button" class="btn outline" onclick="selectAllSilenceSuggestions()" style="padding:3px 8px;font-size:10.5px;font-weight:700;background:#fff;border-color:#f59e0b;color:#92400e">
+            ✓ Chọn tất cả (${silenceSuggestions.length})
+          </button>
+          <button type="button" class="btn outline" onclick="deselectAllSilenceSuggestions()" style="padding:3px 8px;font-size:10.5px;font-weight:700;background:#fff;border-color:#cbd5e1;color:#64748b">
+            ✕ Bỏ chọn
+          </button>
+          <button type="button" class="btn outline" onclick="dismissAllSilenceSuggestions()" style="padding:3px 8px;font-size:10.5px;color:#94a3b8;background:#fff;border-color:#cbd5e1">
+            Đóng
+          </button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#78350f;margin-bottom:10px;line-height:1.4">
+        💡 <strong>Mẹo sư phạm:</strong> Hệ thống đã tự động chọn sẵn các đoạn thừa và chừa đệm an toàn <strong>0.35s</strong> mỗi đầu để không nuốt chữ. Bạn có thể bấm <strong>[▶ Nghe thử]</strong> hoặc <strong>[✕ Giữ lại]</strong> nếu đoạn đó học sinh cần suy nghĩ.
+      </div>
+      <div style="max-height:190px;overflow-y:auto;padding-right:2px;margin-bottom:10px">
+        ${cards}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;border-top:1px solid #fde68a;padding-top:10px">
+        <button type="button" class="btn primary" onclick="removeSelectedSilenceSuggestions()" style="background:#d97706;color:#fff;font-size:12px;font-weight:800;padding:9px 16px;border-radius:8px;box-shadow:0 3px 10px rgba(217,119,6,0.3);flex:1" ${selectedSilenceSuggestionIds.size ? '' : 'disabled'}>
+          🚀 Cắt bỏ ${selectedSilenceSuggestionIds.size} đoạn thừa & Tạo video mới (Tiết kiệm ${totalSelectedTime.toFixed(1)}s)
+        </button>
+      </div>
+      <div style="font-size:10px;color:#b45309;margin-top:5px;text-align:center">
+        🛡️ <strong>Bảo toàn tuyệt đối:</strong> Video gốc luôn được giữ nguyên 100%, không lo mất dữ liệu.
+      </div>
+    </div>
+  `;
 }
 
 function toggleSilenceSuggestionSelection(id, checked) {
@@ -4256,10 +4440,34 @@ function previewSilenceSuggestion(id) {
   const item = silenceSuggestions.find(candidate => candidate.id === id);
   const player = $('#editorPlayer');
   if (!item || !player) return;
-  if (silencePreviewTimer) clearTimeout(silencePreviewTimer);
+
+  // Nếu đang nghe đoạn này thì bấm lại để dừng
+  if (currentPreviewingSilenceId === id && silencePreviewTimer) {
+    player.pause();
+    clearTimeout(silencePreviewTimer);
+    silencePreviewTimer = null;
+    currentPreviewingSilenceId = null;
+    renderSilenceSuggestions();
+    return;
+  }
+
+  // Dừng đoạn nghe trước đó nếu có
+  if (silencePreviewTimer) {
+    clearTimeout(silencePreviewTimer);
+    silencePreviewTimer = null;
+  }
+
+  currentPreviewingSilenceId = id;
+  renderSilenceSuggestions();
+
   player.currentTime = item.rawStart;
   player.play().catch(() => {});
-  silencePreviewTimer = setTimeout(() => { player.pause(); silencePreviewTimer = null; }, Math.max(250, (item.rawEnd - item.rawStart) * 1000));
+  silencePreviewTimer = setTimeout(() => {
+    player.pause();
+    silencePreviewTimer = null;
+    currentPreviewingSilenceId = null;
+    renderSilenceSuggestions();
+  }, Math.max(250, (item.rawEnd - item.rawStart) * 1000));
 }
 
 function dismissSilenceSuggestion(id) {
