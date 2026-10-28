@@ -110,6 +110,18 @@ function killProcessTree(child) {
 }
 
 const RECOMMENDED_THREADS = Math.min(4, Math.max(1, Math.floor((os.cpus() || []).length / 2)));
+const QA_RESOURCE_METRICS = process.env.FASTEDIT_QA_METRICS === '1';
+const activeFfmpegPids = new Set();
+let qaPeakRssBytes = process.memoryUsage().rss;
+let qaBaselineRssBytes = qaPeakRssBytes;
+let qaBaselineCpu = process.cpuUsage();
+let qaBaselineHr = process.hrtime.bigint();
+if (QA_RESOURCE_METRICS) {
+  const sampler = setInterval(() => {
+    qaPeakRssBytes = Math.max(qaPeakRssBytes, process.memoryUsage().rss);
+  }, 25);
+  sampler.unref();
+}
 
 const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
   const { signal, timeout = 600000, inactivityTimeout = 0, onProgress, totalDuration, ...spawnOpts } = opts;
@@ -119,11 +131,15 @@ const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
     finalArgs.unshift('-threads', String(RECOMMENDED_THREADS));
   }
   const child = spawn(cmd, finalArgs, { windowsHide:true, ...spawnOpts });
+  const trackFfmpegPid = isFFmpeg && Number.isInteger(child.pid);
+  if (trackFfmpegPid) activeFfmpegPids.add(child.pid);
+  const untrackFfmpegPid = () => { if (trackFfmpegPid) activeFfmpegPids.delete(child.pid); };
   if (child.pid && os.constants.priority?.PRIORITY_BELOW_NORMAL) {
     try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
   }
   let out='', err='';
   let aborted = false;
+  let abortError = null;
   let watchdogTimer = null;
   let maxTimer = null;
   let lastActiveTime = Date.now();
@@ -136,42 +152,46 @@ const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
   };
 
   const onAbort = () => {
+    if (aborted) return;
     aborted = true;
+    abortError = new Error('Thao tác đã bị người dùng dừng lại.');
     cleanup();
     killProcessTree(child);
-    reject(new Error('Thao tác đã bị người dùng dừng lại.'));
   };
 
   if (signal) {
     if (signal.aborted) {
+      aborted = true;
+      abortError = new Error('Thao tác đã bị người dùng dừng lại.');
+      cleanup();
       killProcessTree(child);
-      return reject(new Error('Thao tác đã bị người dùng dừng lại.'));
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
     }
-    signal.addEventListener('abort', onAbort, { once: true });
   }
 
   // 1. Inactivity Watchdog: Kiểm tra mỗi 5s. Nếu bật inactivityTimeout (>0) và tiến trình không sinh output -> Treo -> kill
-  if (inactivityTimeout > 0) {
+  if (!aborted && inactivityTimeout > 0) {
     watchdogTimer = setInterval(() => {
       const idleTime = Date.now() - lastActiveTime;
       if (idleTime > inactivityTimeout) {
         aborted = true;
+        abortError = new Error(`Tác vụ ${path.basename(cmd)} bị treo không phản hồi sau ${Math.round(idleTime / 1000)}s.`);
         cleanup();
         killProcessTree(child);
         console.warn(`[Process Inactivity Watchdog] Tác vụ ${path.basename(cmd)} bị treo không phản hồi sau ${Math.round(idleTime / 1000)}s. Đã tự động giải phóng tiến trình.`);
-        reject(new Error(`Tác vụ ${path.basename(cmd)} bị treo không phản hồi sau ${Math.round(idleTime / 1000)}s. Đã tự động giải phóng tiến trình.`));
       }
     }, 5000);
   }
 
   // 2. Maximum Total Execution Timeout (Mặc định 10 phút, tránh rò rỉ vĩnh viễn)
-  if (timeout > 0) {
+  if (!aborted && timeout > 0) {
     maxTimer = setTimeout(() => {
       aborted = true;
+      abortError = new Error(`Tác vụ ${path.basename(cmd)} vượt quá giới hạn tối đa ${Math.round(timeout / 1000)}s.`);
       cleanup();
       killProcessTree(child);
       console.warn(`[Process Timeout] Tác vụ ${path.basename(cmd)} vượt quá giới hạn tối đa ${Math.round(timeout / 1000)}s. Đã tự động giải phóng.`);
-      reject(new Error(`Tác vụ ${path.basename(cmd)} vượt quá giới hạn tối đa ${Math.round(timeout / 1000)}s. Đã tự động giải phóng.`));
     }, timeout);
   }
 
@@ -213,13 +233,15 @@ const run = (cmd, args, opts={}) => new Promise((resolve, reject) => {
     }
   });
   child.on('error', (e) => {
+    untrackFfmpegPid();
     cleanup();
     if (!aborted) reject(e);
   });
   child.on('close', code => {
+    untrackFfmpegPid();
     cleanup();
     if (aborted || signal?.aborted) {
-      return reject(new Error('Thao tác đã bị người dùng dừng lại.'));
+      return reject(abortError || new Error('Thao tác đã bị người dùng dừng lại.'));
     }
     if (stdoutOverflow) {
       return reject(new Error('Đầu ra tiến trình vượt giới hạn bộ nhớ an toàn (8 MB).'));
@@ -507,7 +529,7 @@ async function cleanProjectCache(projectId, activeSceneHashes = []) {
   }
 }
 
-async function renderIntermediateScene(project, scene, index) {
+async function renderIntermediateScene(project, scene, index, signal = null) {
   const dir = projectDir(project.id);
   const cacheDir = path.join(dir, 'cache');
   await fs.mkdir(cacheDir, { recursive: true });
@@ -644,16 +666,22 @@ async function renderIntermediateScene(project, scene, index) {
     tmpFilePath
   );
 
-  await run(FFMPEG_BIN, args, { cwd: dir });
+  let cacheCommitted = false;
+  let tmpStat;
+  try {
+    await run(FFMPEG_BIN, args, { cwd: dir, signal });
 
-  // Verify and rename atomically
-  const tmpStat = await fs.stat(tmpFilePath);
-  if (tmpStat.size < 1000) {
-    await fs.unlink(tmpFilePath).catch(() => {});
-    throw new Error(`Render cảnh ${index + 1} thất bại (file đầu ra rỗng).`);
+    // Verify and rename atomically
+    tmpStat = await fs.stat(tmpFilePath);
+    if (tmpStat.size < 1000) {
+      throw new Error(`Render cảnh ${index + 1} thất bại (file đầu ra rỗng).`);
+    }
+
+    await fs.rename(tmpFilePath, cacheFilePath);
+    cacheCommitted = true;
+  } finally {
+    if (!cacheCommitted) await fs.unlink(tmpFilePath).catch(() => {});
   }
-
-  await fs.rename(tmpFilePath, cacheFilePath);
   console.log(`[Cache Saved] Cảnh ${index + 1} -> ${cacheFileName} (${tmpStat.size} bytes)`);
 
   return {
@@ -668,7 +696,7 @@ async function renderIntermediateScene(project, scene, index) {
   };
 }
 
-async function render(project) {
+async function render(project, signal = null) {
   const id = safeId(project.id);
   if (!id) throw new Error('Mã dự án không hợp lệ.');
   const dir = projectDir(id);
@@ -688,7 +716,8 @@ async function render(project) {
   let cacheHits = 0;
 
   for (let i = 0; i < scenes.length; i++) {
-    const res = await renderIntermediateScene(project, scenes[i], i);
+    if (signal?.aborted) throw new Error('Thao tác đã bị người dùng dừng lại.');
+    const res = await renderIntermediateScene(project, scenes[i], i, signal);
     renderedScenes.push(res);
     totalDuration += res.duration;
     if (res.cacheHit) cacheHits++;
@@ -723,8 +752,9 @@ async function render(project) {
   let concatMethod = 'stream_copy';
   try {
     try {
-      await run(FFMPEG_BIN, copyArgs, { cwd: dir });
+      await run(FFMPEG_BIN, copyArgs, { cwd: dir, signal });
     } catch (copyErr) {
+      if (signal?.aborted) throw copyErr;
       console.warn(`[Master Render] Stream copy concat thất bại (${copyErr.message}), kích hoạt fallback re-encode...`);
       concatMethod = 're_encode_fallback';
       const is1080p = project.resolution === '1080p';
@@ -742,7 +772,7 @@ async function render(project) {
         '-movflags', '+faststart',
         tempOutput
       ];
-      await run(FFMPEG_BIN, fallbackArgs, { cwd: dir });
+      await run(FFMPEG_BIN, fallbackArgs, { cwd: dir, signal });
     }
 
     // Ghi nguyên tử để không thay thế video hợp lệ bằng file dở dang.
@@ -799,6 +829,30 @@ const server=http.createServer(async (req,res)=>{
   }
   try {
     const url=new URL(req.url,'http://127.0.0.1');
+    if (QA_RESOURCE_METRICS && req.method === 'GET' && url.pathname === '/api/qa/resources') {
+      const reset = url.searchParams.get('reset') === '1';
+      const currentRssBytes = process.memoryUsage().rss;
+      if (reset) {
+        qaBaselineRssBytes = currentRssBytes;
+        qaPeakRssBytes = currentRssBytes;
+        qaBaselineCpu = process.cpuUsage();
+        qaBaselineHr = process.hrtime.bigint();
+      }
+      qaPeakRssBytes = Math.max(qaPeakRssBytes, currentRssBytes);
+      const cpu = process.cpuUsage(qaBaselineCpu);
+      const elapsedMs = Number(process.hrtime.bigint() - qaBaselineHr) / 1e6;
+      return send(res, 200, {
+        pid: process.pid,
+        rssBytes: currentRssBytes,
+        peakRssBytes: qaPeakRssBytes,
+        peakRssDeltaBytes: Math.max(0, qaPeakRssBytes - qaBaselineRssBytes),
+        cpuUserMs: cpu.user / 1000,
+        cpuSystemMs: cpu.system / 1000,
+        cpuPercent: elapsedMs > 0 ? ((cpu.user + cpu.system) / 1000 / elapsedMs) * 100 : 0,
+        elapsedMs,
+        ffmpegPids: [...activeFfmpegPids]
+      });
+    }
     if(url.pathname==='/api/heartbeat') {
       lastHeartbeatTime = Date.now();
       heartbeatActive = true;
@@ -3222,12 +3276,15 @@ const server=http.createServer(async (req,res)=>{
       }
     }
     if(req.method==='POST' && url.pathname==='/api/render') {
+      const clientAbort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) clientAbort.abort(); });
       const body=await readJson(req);
       try {
-        const result=await render(body);
+        const result=await render(body, clientAbort.signal);
         await fs.writeFile(path.join(projectDir(body.id),'project.json'),JSON.stringify({...body,updatedAt:new Date().toISOString()},null,2));
         return send(res,200,result);
       } catch (err) {
+        if (clientAbort.signal.aborted) return;
         console.error('[Render Error]', err.message);
         return send(res, 400, { error: err.message });
       }

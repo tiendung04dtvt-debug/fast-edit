@@ -1,7 +1,7 @@
 {
-  "version": "1.3.0",
-  "updatedAt": "2026-10-28T09:15:00.000Z",
-  "notes": "v1.3.0: Tối ưu 4 khu vực: Cache thư viện video (0.05ms), giảm 50% probe ghép nối, render 2 tầng Waveform, tự dọn rác mồ côi startup.",
+  "version": "1.4.0",
+  "updatedAt": "2026-10-28T09:35:00.000Z",
+  "notes": "v1.4.0: Hỗ trợ tên file Unicode tiếng Việt phức tạp (NFC/NFD/apostrophe), đo lường Peak RAM 4K an toàn, hủy render dọn .part trong 159ms.",
   "files": [
     "server.mjs",
     "video_concat_planner.mjs",
